@@ -1,0 +1,4 @@
+# Only needed to run test_phase3.py — not required for JARVIS itself.
+pytest
+pytest-asyncio
+httpx

@@ -1,0 +1,57 @@
+# LiveKit voice agent
+livekit-agents
+livekit-plugins-openai
+livekit-plugins-silero
+livekit-plugins-noise-cancellation
+
+# Local speech-to-text (Whisper)
+faster-whisper
+
+# Local text-to-speech (Piper)
+piper-tts
+
+# AI
+ollama
+pytz
+
+# Backend API
+fastapi
+uvicorn[standard]
+websockets
+aiohttp
+aiofiles
+pydantic
+python-multipart
+pypdf
+python-docx
+
+# Memory & tools
+mem0ai
+duckduckgo-search
+langchain_community
+requests
+python-dotenv
+
+# Phase 2/3: system awareness + code analysis
+psutil
+pygetwindow
+pyflakes
+
+# Phase 4: screen-aware error analysis (Feature 1)
+# Both are optional-import guarded in screen_tools.py — JARVIS still
+# starts and runs fine without them, analyze_screen just reports
+# "not available" until they're installed. Tesseract OCR's binary
+# itself (not a pip package) also needs to be on PATH — see
+# https://github.com/tesseract-ocr/tesseract for the Windows installer.
+mss
+pytesseract
+pillow
+
+# System Security + Storage Cleaner
+# Optional-import guarded in system_health.py, same pattern as above —
+# without it, clean_junk() reports the specific SAFE_TO_CLEAN
+# categories as skipped (with this exact reason) instead of either
+# failing outright or permanent-deleting as a fallback. Moves cleaned
+# files to the Recycle Bin rather than deleting them outright, so an
+# approved cleanup stays recoverable afterward.
+send2trash

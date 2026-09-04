@@ -1,0 +1,1915 @@
+/* ── RESET & BASE ─────────────────────────────────────── */
+*, *::before, *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --cyan:        #00d4ff;
+    --cyan-dim:    #0099bb;
+    --cyan-glow:   rgba(0, 212, 255, 0.15);
+    --cyan-bright: rgba(0, 212, 255, 0.8);
+    --blue-dark:   #020b18;
+    --blue-mid:    #041525;
+    --blue-panel:  rgba(0, 20, 40, 0.85);
+    --blue-card:   rgba(0, 30, 55, 0.9);
+    --border:      rgba(0, 212, 255, 0.2);
+    --border-bright: rgba(0, 212, 255, 0.5);
+    --text-primary:   #00d4ff;
+    --text-secondary: rgba(0, 212, 255, 0.6);
+    --text-dim:       rgba(0, 212, 255, 0.3);
+    --danger:  #ff3c3c;
+    --success: #00ff88;
+    --warning: #ffaa00;
+    --font: 'Courier New', Courier, monospace;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--blue-dark);
+    color: var(--text-primary);
+    font-family: var(--font);
+    font-size: 14px;
+    letter-spacing: 0.05em;
+}
+
+/* Faint structural grid texture across the whole app — Section 12
+   ("visual depth"): a very low-opacity technical grid, not a pattern
+   you consciously notice, sitting behind the scanlines/particles. */
+.jarvis-shell::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background-image:
+        linear-gradient(rgba(0, 212, 255, 0.035) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0, 212, 255, 0.035) 1px, transparent 1px);
+    background-size: 42px 42px;
+    mask-image: radial-gradient(ellipse at 50% 40%, rgba(0,0,0,0.9), transparent 75%);
+    -webkit-mask-image: radial-gradient(ellipse at 50% 40%, rgba(0,0,0,0.9), transparent 75%);
+}
+
+/* ── SCANLINES ────────────────────────────────────────── */
+.scanlines {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    pointer-events: none;
+    background: repeating-linear-gradient(
+        to bottom,
+        transparent 0px,
+        transparent 3px,
+        rgba(0, 0, 0, 0.08) 3px,
+        rgba(0, 0, 0, 0.08) 4px
+    );
+}
+
+/* ── PARTICLE CANVAS ──────────────────────────────────── */
+#particle-canvas {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+}
+
+/* ── LAYOUT ───────────────────────────────────────────── */
+.jarvis-shell {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    flex-direction: column;
+    /* dvh accounts for mobile/desktop browser chrome (address bar,
+       etc.) shrinking the *actual* visible viewport below 100vh —
+       falls back to 100vh in browsers that don't support dvh yet.
+       This is the root fix for "content extends below the visible
+       screen": the app now sizes itself to the real visible area
+       instead of the nominal one. */
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100vh;
+    max-height: 100dvh;
+    overflow: hidden;
+}
+
+.jarvis-layout {
+    display: grid;
+    grid-template-columns: 262px 1fr 310px;
+    gap: 0;
+    padding: 10px 12px 12px;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 8px;
+    overflow: hidden;
+    min-height: 0;
+}
+
+/* ── LEFT SIDEBAR: internal scroll fallback ──────────────
+   Root cause of "AGENT CONTROL cut off": SYSTEM OVERVIEW, CORE
+   MODULES, MEMORY CORE and AGENT CONTROL are all flex-shrink:0 (see
+   .card) — correct, since compressing them would make their contents
+   unreadable — but that means if their combined height ever exceeds
+   the actual available viewport height, the excess has nowhere to go
+   except get clipped by .panel's overflow:hidden. Section 4's own
+   explicit fallback is "make ONLY the left sidebar internally
+   scrollable" — so panel-left (and only panel-left) gets its own
+   auto-scroll with a thin cyan-tinted scrollbar matching the existing
+   HUD aesthetic, instead of a hard clip. On any viewport tall enough
+   to fit all four sections (the common case), this scrollbar never
+   appears. */
+.panel-left {
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding-right: 4px;
+}
+.panel-left::-webkit-scrollbar { width: 3px; }
+.panel-left::-webkit-scrollbar-track { background: transparent; }
+.panel-left::-webkit-scrollbar-thumb {
+    background: var(--cyan-dim);
+    border-radius: 2px;
+}
+
+/* Safety net for the right column too (Section 8/9): LIVE CONVERSATION
+   is already the flexible item and shrinks on its own, but this keeps
+   QUICK COMMANDS / AUDIO WAVEFORM from ever being hard-clipped on an
+   unusually short viewport instead of the column scrolling. */
+.panel-right {
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* ── TOP HEADER ───────────────────────────────────────── */
+/* Section 2 of the redesign: compact branding + clock strip across the
+   full width, matching the reference screenshot's top row. Purely
+   structural/visual — every value inside (clock, date, session id,
+   backend dot) is the same real element already driven by app.js,
+   just relocated out of the old per-column .center-topbar. */
+.app-header {
+    position: relative;
+    z-index: 1;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    padding: 16px 24px;
+    margin: 14px 14px 0;
+    background: var(--blue-card);
+    border: 1px solid var(--border);
+    border-bottom: 1px solid var(--border-bright);
+}
+
+.header-brand {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.brand-title {
+    font-size: 20px;
+    font-weight: bold;
+    letter-spacing: 0.25em;
+    color: var(--cyan);
+    text-shadow: 0 0 10px var(--cyan), 0 0 20px var(--cyan-dim);
+}
+.brand-dot { color: var(--cyan); }
+
+.brand-subtitle {
+    font-size: 8px;
+    letter-spacing: 0.2em;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.header-clock {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    flex-shrink: 0;
+}
+
+.header-clock-time {
+    font-size: 16px;
+    letter-spacing: 0.08em;
+    color: var(--text-primary, #eaf6ff);
+    color: #eaf6ff;
+}
+
+.header-clock-date {
+    font-size: 9px;
+    letter-spacing: 0.12em;
+    color: var(--text-secondary);
+}
+
+.header-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.header-session {
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+}
+.header-session span { color: var(--cyan); }
+
+/* ── Section 19: minimal ON/OFF proactive-intelligence control ──── */
+.proactive-toggle {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: transparent;
+    border: 1px solid rgba(0, 212, 255, 0.15);
+    border-radius: 3px;
+    padding: 3px 8px;
+    font-family: var(--font);
+    font-size: 8px;
+    letter-spacing: 0.1em;
+    color: var(--text-dim);
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.proactive-toggle:hover { border-color: var(--cyan-dim); color: var(--text-secondary); }
+.proactive-toggle-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--text-dim);
+}
+.proactive-toggle.on .proactive-toggle-dot {
+    background: var(--success);
+    box-shadow: 0 0 5px var(--success);
+}
+.proactive-toggle.on { color: var(--text-secondary); }
+
+/* ── Section 9: compact HUD notification toast stack ──────────────
+   Fixed/floating, top-right, well clear of the reactor (center) and
+   command bar (bottom) and Live Conversation (right column, but this
+   sits above it in z-order only while visible, auto-dismissing). */
+.proactive-toast-stack {
+    position: fixed;
+    top: 76px;
+    right: 16px;
+    z-index: 500;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    width: 280px;
+    pointer-events: none;
+}
+
+.proactive-toast {
+    pointer-events: auto;
+    background: var(--blue-card);
+    border: 1px solid var(--border-bright);
+    padding: 10px 12px;
+    clip-path: polygon(0 0, calc(100% - 8px) 0, 100% 8px, 100% 100%, 0 100%);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    animation: toastIn 0.25s ease;
+    font-size: 11px;
+}
+.proactive-toast.severity-WARNING,
+.proactive-toast.severity-ERROR { border-color: var(--warning); }
+.proactive-toast.severity-CRITICAL {
+    border-color: var(--danger);
+    box-shadow: 0 4px 20px rgba(255, 60, 60, 0.25);
+}
+.proactive-toast.severity-INFO { border-color: var(--success); }
+
+@keyframes toastIn {
+    from { opacity: 0; transform: translateX(20px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+.toast-title {
+    font-size: 10px;
+    font-weight: bold;
+    letter-spacing: 0.1em;
+    margin-bottom: 4px;
+}
+.severity-WARNING .toast-title, .severity-ERROR .toast-title { color: var(--warning); }
+.severity-CRITICAL .toast-title { color: var(--danger); }
+.severity-INFO .toast-title { color: var(--success); }
+
+.toast-message {
+    color: var(--text-secondary);
+    line-height: 1.4;
+    margin-bottom: 8px;
+}
+
+.toast-actions {
+    display: flex;
+    gap: 6px;
+}
+.toast-btn {
+    flex: 1;
+    background: rgba(0, 212, 255, 0.06);
+    border: 1px solid var(--border);
+    color: var(--text-secondary);
+    font-family: var(--font);
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    padding: 5px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+}
+.toast-btn:hover { border-color: var(--cyan); color: var(--cyan); }
+.toast-btn.dismiss { flex: 0 0 auto; padding: 5px 10px; }
+
+/* ── Section 22: subtle Arc Reactor alert state — no redesign, just a
+   gentler/stronger border-color pulse layered on the existing rings
+   while an unacknowledged WARNING/CRITICAL proactive event is live. */
+.hud-wrapper.proactive-warning .ring-glow { animation: rotate-ccw 5s linear infinite, pulseWarn 2.4s ease-in-out infinite; }
+.hud-wrapper.proactive-critical .ring-glow { animation: rotate-ccw 5s linear infinite, pulseCritical 1.2s ease-in-out infinite; }
+@keyframes pulseWarn {
+    0%, 100% { border-color: rgba(0, 212, 255, 0.6); }
+    50%      { border-color: rgba(255, 170, 0, 0.75); }
+}
+@keyframes pulseCritical {
+    0%, 100% { border-color: rgba(0, 212, 255, 0.6); }
+    50%      { border-color: rgba(255, 60, 60, 0.85); }
+}
+
+/* ── CARDS ────────────────────────────────────────────── */
+/* Angular/clipped corner treatment (Section 10 of the redesign) — a
+   small notch cut from the top-right corner instead of a rounded
+   rectangle, matching the reference screenshot's technical-HUD panel
+   style. Every existing .card usage (system info, memory, agent
+   controls, log, conversation, quick commands, waveform) picks this up
+   automatically; no markup changes needed beyond what's already there. */
+.card {
+    background: rgba(0, 22, 40, 0.55);
+    border: 1px solid rgba(0, 212, 255, 0.14);
+    padding: 11px 13px;
+    position: relative;
+    overflow: hidden;
+    flex-shrink: 0;
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+    box-shadow: inset 0 0 18px rgba(0, 0, 0, 0.25);
+}
+
+/* Sidebar cards specifically (panel-left) — Section 7: "reduce visual
+   heaviness ... do not make every section look like a large boxed
+   dashboard card ... thin HUD borders and subtle separators." Lighter
+   fill, no visible box edge except a hairline, relying on the header
+   underline + row separators to carry structure instead of a filled
+   panel. */
+.panel-left .card {
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid rgba(0, 212, 255, 0.08);
+    padding: 10px 4px 12px;
+    clip-path: none;
+    box-shadow: none;
+}
+.panel-left .card:last-child { border-bottom: none; }
+.panel-left .card::before { display: none; }
+
+.card.card-compact {
+    padding: 10px 12px;
+}
+
+.card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        var(--cyan),
+        transparent
+    );
+    opacity: 0.6;
+}
+
+.card-grow {
+    flex: 1 1 auto;
+    /* Keeps SYSTEM LOG / LIVE CONVERSATION from collapsing to nothing
+       when panel-left/panel-right run short on space — the column
+       scrolls (see .panel-left/.panel-right above) instead. */
+    min-height: 110px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.card-title {
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 0.15em;
+    color: var(--cyan);
+    text-shadow: 0 0 8px var(--cyan);
+}
+
+/* ── STATUS DOT ───────────────────────────────────────── */
+.status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--warning);
+    box-shadow: 0 0 6px var(--warning);
+    transition: background 0.4s, box-shadow 0.4s;
+}
+
+.status-dot.online {
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+    animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.status-dot.offline {
+    background: var(--danger);
+    box-shadow: 0 0 6px var(--danger);
+}
+
+@keyframes pulse-dot {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+}
+
+/* ── BLINK DOT ────────────────────────────────────────── */
+.blink-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--cyan);
+    box-shadow: 0 0 6px var(--cyan);
+    animation: blink 1.2s step-end infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0; }
+}
+
+/* ── INFO GRID ────────────────────────────────────────── */
+.info-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.info-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+    border-bottom: 1px solid rgba(0, 212, 255, 0.06);
+}
+
+.ov-icon {
+    flex-shrink: 0;
+    width: 14px;
+    text-align: center;
+    font-size: 10px;
+    color: var(--cyan-dim);
+    opacity: 0.8;
+}
+
+.info-label {
+    flex: 1;
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--text-secondary);
+}
+
+.info-value {
+    font-size: 11px;
+    font-weight: bold;
+    color: var(--cyan);
+    text-shadow: 0 0 6px var(--cyan-dim);
+}
+
+.info-value.online  { color: var(--success); text-shadow: 0 0 6px var(--success); }
+.info-value.offline { color: var(--danger);  text-shadow: 0 0 6px var(--danger);  }
+.info-value.warning { color: var(--warning); text-shadow: 0 0 6px var(--warning); }
+
+/* ── BUTTONS ──────────────────────────────────────────── */
+.btn-group {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.hud-btn {
+    flex: 1;
+    background: transparent;
+    border: 1px solid var(--border-bright);
+    color: var(--cyan);
+    font-family: var(--font);
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    padding: 6px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+}
+
+.hud-btn:hover {
+    background: var(--cyan-glow);
+    box-shadow: 0 0 10px var(--cyan-glow);
+    border-color: var(--cyan);
+}
+
+.hud-btn-danger {
+    border-color: rgba(255, 60, 60, 0.5);
+    color: var(--danger);
+}
+
+.hud-btn-danger:hover {
+    background: rgba(255, 60, 60, 0.1);
+    box-shadow: 0 0 10px rgba(255, 60, 60, 0.2);
+    border-color: var(--danger);
+}
+
+.hud-btn-success {
+    border-color: rgba(0, 255, 136, 0.5);
+    color: var(--success);
+}
+
+.hud-btn-success:hover {
+    background: rgba(0, 255, 136, 0.1);
+    box-shadow: 0 0 10px rgba(0, 255, 136, 0.2);
+    border-color: var(--success);
+}
+
+.btn-icon { margin-right: 3px; }
+
+/* ── LOG LIST ─────────────────────────────────────────── */
+.log-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-right: 4px;
+}
+
+.log-list::-webkit-scrollbar { width: 3px; }
+.log-list::-webkit-scrollbar-track { background: transparent; }
+.log-list::-webkit-scrollbar-thumb {
+    background: var(--cyan-dim);
+    border-radius: 2px;
+}
+
+.log-entry {
+    font-size: 9px;
+    padding: 4px 6px;
+    border-left: 2px solid var(--border);
+    color: var(--text-secondary);
+    line-height: 1.4;
+    animation: fadeIn 0.3s ease;
+}
+
+.log-entry.error   { border-color: var(--danger);  color: var(--danger);  }
+.log-entry.warning { border-color: var(--warning); color: var(--warning); }
+.log-entry.success { border-color: var(--success); color: var(--success); }
+.log-entry.info    { border-color: var(--cyan);    color: var(--text-secondary); }
+
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateX(-6px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── CENTER TOP BAR (legacy — kept for compatibility, unused in the
+   redesigned markup, which moved SESSION/TIME/DATE into .app-header) */
+.center-topbar {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--blue-card);
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+
+.topbar-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+}
+
+.topbar-label {
+    font-size: 8px;
+    color: var(--text-dim);
+    letter-spacing: 0.15em;
+}
+
+.topbar-value {
+    font-size: 11px;
+    color: var(--cyan);
+    text-shadow: 0 0 8px var(--cyan);
+    letter-spacing: 0.1em;
+}
+
+/* ── CORE MODULES ─────────────────────────────────────── */
+.module-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.module-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    border-bottom: 1px solid rgba(0, 212, 255, 0.06);
+}
+
+.mod-icon {
+    flex-shrink: 0;
+    width: 14px;
+    text-align: center;
+    font-size: 10px;
+    opacity: 0.75;
+}
+
+.mod-label {
+    flex: 1;
+    font-size: 10.5px;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.mod-dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--text-dim);
+}
+.mod-dot.online {
+    background: var(--success);
+    box-shadow: 0 0 6px var(--success);
+    animation: pulse-dot 2s ease-in-out infinite;
+}
+.mod-dot.offline {
+    background: var(--danger);
+    box-shadow: 0 0 5px var(--danger);
+}
+
+.mod-status-label {
+    flex-shrink: 0;
+    width: 42px;
+    font-size: 8px;
+    letter-spacing: 0.08em;
+    text-align: right;
+    color: var(--text-dim);
+}
+
+/* ── HUD WRAPPER ──────────────────────────────────────── */
+/* Root cause of "COMMAND BAR extends below the screen": the reactor
+   was a fixed 380px regardless of available height, so on a shorter
+   viewport (e.g. an actual 1366×768 browser window, which after
+   browser chrome is often closer to ~650-700px tall) the fixed-size
+   reactor + response panel + command bar simply didn't fit, and
+   .panel-center's overflow:hidden clipped whatever ran off the bottom
+   — the command bar.
+   --reactor is now viewport-height-driven and inherited by every ring/
+   button below via calc(), so the WHOLE reactor scales together as one
+   unit (never distorted) instead of resizing piecemeal. The formula is
+   tuned so --reactor stays effectively 380px (the original, approved
+   size) on any viewport ≥ ~900px tall — i.e. unchanged on normal
+   desktop/1080p+ screens — and only shrinks below that as height gets
+   tight, which is exactly the "reactor remains visible, response area
+   becomes smaller first" behavior asked for. This is deliberately NOT
+   transform:scale() (explicitly ruled out) — every element still
+   renders at its own real computed size, so borders/glow/animation
+   stay crisp at any size. */
+.hud-wrapper {
+    --reactor: clamp(210px, 42vh, 380px);
+    position: relative;
+    width: var(--reactor);
+    height: var(--reactor);
+    margin: 0 auto;
+    flex-shrink: 0;
+}
+
+/* ── REACTOR META (VOICE STATUS / ACTIVE MODE row below the reactor,
+   matching the reference screenshot) ────────────────────────────── */
+.reactor-meta {
+    display: flex;
+    justify-content: space-between;
+    padding: 0 24px;
+    margin-top: -6px;
+    flex-shrink: 0;
+}
+
+.reactor-meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.reactor-meta-item.align-right {
+    align-items: flex-end;
+    text-align: right;
+}
+
+.meta-label {
+    font-size: 8px;
+    letter-spacing: 0.15em;
+    color: var(--text-dim);
+}
+
+.meta-value {
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    color: var(--cyan);
+    text-shadow: 0 0 8px var(--cyan-dim);
+}
+
+/* ── HUD RINGS ────────────────────────────────────────── */
+.hud-ring {
+    position: absolute;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+.ring-outer {
+    width: calc(var(--reactor) * 0.947);
+    height: calc(var(--reactor) * 0.947);
+    border-color: rgba(0, 212, 255, 0.25);
+    animation: rotate-cw 20s linear infinite;
+}
+
+.ring-mid {
+    width: calc(var(--reactor) * 0.779);
+    height: calc(var(--reactor) * 0.779);
+    border-color: rgba(0, 212, 255, 0.35);
+    border-width: 2px;
+    animation: rotate-ccw 14s linear infinite;
+}
+
+.ring-inner {
+    width: calc(var(--reactor) * 0.605);
+    height: calc(var(--reactor) * 0.605);
+    border-color: rgba(0, 212, 255, 0.5);
+    border-width: 2px;
+    box-shadow:
+        0 0 15px rgba(0, 212, 255, 0.2),
+        inset 0 0 15px rgba(0, 212, 255, 0.1);
+    animation: rotate-cw 8s linear infinite;
+}
+
+.ring-glow {
+    width: calc(var(--reactor) * 0.5);
+    height: calc(var(--reactor) * 0.5);
+    border-color: rgba(0, 212, 255, 0.6);
+    border-width: 1px;
+    box-shadow:
+        0 0 20px rgba(0, 212, 255, 0.3),
+        inset 0 0 20px rgba(0, 212, 255, 0.15);
+    animation: rotate-ccw 5s linear infinite;
+}
+
+/* Extra outer technical tick ring (Section 2: "outer technical tick
+   ring ... multiple thin concentric rings") — a dashed hairline just
+   inside the wrapper's edge, dense enough to read as fine markings
+   rather than a solid circle. Purely decorative CSS, no new markup.
+   Mask radii are in % (of this element's own box) rather than px so
+   the ring thickness stays proportional as --reactor scales, instead
+   of a fixed-px band that would misalign on a shrunk reactor. */
+.ring-tickmarks {
+    width: calc(var(--reactor) * 0.995);
+    height: calc(var(--reactor) * 0.995);
+    border-color: transparent;
+    background:
+        repeating-conic-gradient(
+            rgba(0, 212, 255, 0.5) 0deg 0.6deg,
+            transparent 0.6deg 3deg
+        );
+    -webkit-mask: radial-gradient(circle, transparent 49.2%, #000 49.7%, #000 50.3%, transparent 50.8%);
+            mask: radial-gradient(circle, transparent 49.2%, #000 49.7%, #000 50.3%, transparent 50.8%);
+    animation: rotate-cw 90s linear infinite;
+    opacity: 0.7;
+}
+
+@keyframes rotate-cw  { from { transform: translate(-50%,-50%) rotate(0deg);   }
+                        to   { transform: translate(-50%,-50%) rotate(360deg);  } }
+@keyframes rotate-ccw { from { transform: translate(-50%,-50%) rotate(0deg);   }
+                        to   { transform: translate(-50%,-50%) rotate(-360deg); } }
+
+/* ── RING TICKS ───────────────────────────────────────── */
+.ring-tick-container {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+}
+
+.ring-tick {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 1px;
+    transform-origin: 0 0;
+    background: var(--cyan);
+    opacity: 0.4;
+}
+
+/* ── HUD SVG ──────────────────────────────────────────── */
+.hud-svg {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.arc-track {
+    fill: none;
+    stroke: rgba(0, 212, 255, 0.1);
+    stroke-width: 4;
+}
+
+.arc-progress {
+    fill: none;
+    stroke: var(--cyan);
+    stroke-width: 3;
+    stroke-linecap: round;
+    stroke-dasharray: 974;
+    stroke-dashoffset: 974;
+    transform-origin: center;
+    transform: rotate(-90deg);
+    filter: drop-shadow(0 0 4px var(--cyan));
+    animation: arc-fill 3s ease-out forwards, arc-pulse 4s ease-in-out 3s infinite;
+}
+
+.arc-progress-2 {
+    stroke: rgba(0, 212, 255, 0.4);
+    stroke-width: 2;
+    stroke-dasharray: 754;
+    stroke-dashoffset: 200;
+    animation: arc-fill-2 4s ease-out forwards, arc-spin 12s linear 4s infinite;
+}
+
+/* Radial audio waveform — replaces the old flat waveform-card look with
+   spikes drawn around the ring, centered on the voice button. Filled by
+   drawRadialWaveform() in app.js on each animation frame. */
+.radial-waveform {
+    fill: none;
+    stroke: var(--cyan);
+    stroke-width: 1.5;
+    stroke-linejoin: round;
+    filter: drop-shadow(0 0 5px var(--cyan));
+    opacity: 0.85;
+    transition: stroke 0.25s ease, filter 0.25s ease;
+}
+.radial-waveform.jarvis-speaking {
+    stroke: #00ff88;
+    filter: drop-shadow(0 0 6px #00ff88);
+}
+
+@keyframes arc-fill {
+    from { stroke-dashoffset: 974; }
+    to   { stroke-dashoffset: 100; }
+}
+
+@keyframes arc-pulse {
+    0%, 100% { stroke-dashoffset: 100; opacity: 1; }
+    50%       { stroke-dashoffset: 80;  opacity: 0.7; }
+}
+
+@keyframes arc-fill-2 {
+    from { stroke-dashoffset: 754; }
+    to   { stroke-dashoffset: 200; }
+}
+
+@keyframes arc-spin {
+    from { stroke-dashoffset: 200; }
+    to   { stroke-dashoffset: -554; }
+}
+
+/* ── HUD CENTER ───────────────────────────────────────── */
+.hud-center {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+}
+
+.jarvis-logo {
+    position: absolute;
+    top: calc(50% - 105px);
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 22px;
+    font-weight: bold;
+    letter-spacing: 0.3em;
+    color: var(--cyan);
+    text-shadow:
+        0 0 10px var(--cyan),
+        0 0 20px var(--cyan-dim),
+        0 0 40px rgba(0, 212, 255, 0.3);
+    animation: logo-glow 3s ease-in-out infinite;
+}
+
+@keyframes logo-glow {
+    0%, 100% { text-shadow: 0 0 10px var(--cyan), 0 0 20px var(--cyan-dim); }
+    50%       { text-shadow: 0 0 20px var(--cyan), 0 0 40px var(--cyan),
+                             0 0 60px rgba(0,212,255,0.4); }
+}
+
+.jarvis-subtitle {
+    position: absolute;
+    top: calc(50% - 65px);
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 9px;
+    letter-spacing: 0.4em;
+    color: var(--text-secondary);
+    margin-top: 0;
+}
+
+/* ── VOICE BUTTON ─────────────────────────────────────── */
+.voice-btn {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: calc(var(--reactor) * 0.253);
+    height: calc(var(--reactor) * 0.253);
+    border-radius: 50%;
+    background: rgba(0, 212, 255, 0.08);
+    border: 2px solid var(--cyan);
+    color: var(--cyan);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s;
+    box-shadow:
+        0 0 15px rgba(0, 212, 255, 0.2),
+        inset 0 0 15px rgba(0, 212, 255, 0.05);
+}
+
+.voice-btn:hover {
+    background: rgba(0, 212, 255, 0.15);
+    box-shadow:
+        0 0 25px rgba(0, 212, 255, 0.4),
+        inset 0 0 20px rgba(0, 212, 255, 0.1);
+    transform: translate(-50%, -50%) scale(1.05);
+}
+
+.voice-btn.active {
+    background: rgba(0, 212, 255, 0.2);
+    border-color: var(--cyan-bright);
+    box-shadow:
+        0 0 30px rgba(0, 212, 255, 0.6),
+        inset 0 0 25px rgba(0, 212, 255, 0.15);
+    animation: voice-active-pulse 1s ease-in-out infinite;
+}
+
+@keyframes voice-active-pulse {
+    0%, 100% { box-shadow: 0 0 30px rgba(0,212,255,0.6), inset 0 0 25px rgba(0,212,255,0.15); }
+    50%       { box-shadow: 0 0 50px rgba(0,212,255,0.9), inset 0 0 35px rgba(0,212,255,0.25); }
+}
+
+/* JARVIS is actively processing (STT/LLM) — distinct from LISTENING
+   (idle, waiting for you) and SPEAKING (audio actually playing), so
+   there's always visible feedback during multi-second local-model
+   latency instead of the button looking frozen. */
+.voice-btn.thinking {
+    background: rgba(255, 176, 0, 0.15);
+    border-color: #ffb000;
+    color: #ffb000;
+    box-shadow:
+        0 0 30px rgba(255, 176, 0, 0.5),
+        inset 0 0 25px rgba(255, 176, 0, 0.12);
+    animation: voice-thinking-pulse 0.6s ease-in-out infinite;
+}
+
+@keyframes voice-thinking-pulse {
+    0%, 100% { opacity: 1;   }
+    50%      { opacity: 0.55; }
+}
+
+.voice-btn-ring {
+    position: absolute;
+    inset: -8px;
+    border-radius: 50%;
+    border: 1px solid rgba(0, 212, 255, 0.3);
+    animation: ring-expand 2s ease-out infinite;
+    pointer-events: none;
+}
+
+.voice-btn-ring-2 {
+    animation-delay: 1s;
+}
+
+@keyframes ring-expand {
+    0%   { inset: -8px;  opacity: 0.6; }
+    100% { inset: -24px; opacity: 0; }
+}
+
+.mic-icon {
+    width: calc(var(--reactor) * 0.0737);
+    height: calc(var(--reactor) * 0.0737);
+    flex-shrink: 0;
+}
+
+/* Sits just below the mic icon, inside the button's own circular
+   footprint — not stacked in-flow (which crowded the button at 72px)
+   and not pushed out past the innermost ring (an earlier version of
+   this rule put it below .mic-indicator entirely, which read as
+   "outside the circle" rather than part of it). +8px clears the
+   pulsing .voice-btn-ring animation (expands to inset -24px, i.e.
+   24px beyond the button's own edge) while staying well inside the
+   ~64px gap to the innermost hud ring. */
+.voice-label {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    width: max-content;
+    font-size: 7px;
+    letter-spacing: 0.15em;
+    color: var(--text-secondary);
+    pointer-events: none;
+}
+
+/* ── MIC INDICATOR ────────────────────────────────────── */
+/* Pushed down to clear .voice-label, which now sits tight under the
+   mic icon (inside the button's circular footprint, per design) —
+   without this offset the two would overlap, since both used to
+   start at the same +8px gap after .voice-btn in .hud-center's flex
+   flow. Taken out of flow (absolute) so it doesn't reserve empty
+   flex space while invisible (opacity: 0) at idle. */
+.mic-indicator {
+    position: absolute;
+    top: calc(100% + 20px);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: flex-end;
+    gap: 3px;
+    height: 20px;
+    opacity: 0;
+    transition: opacity 0.3s;
+    pointer-events: none;
+}
+
+.mic-indicator.active { opacity: 1; }
+
+.mic-bar {
+    width: 3px;
+    background: var(--cyan);
+    border-radius: 2px;
+    height: 4px;
+    box-shadow: 0 0 4px var(--cyan);
+    animation: mic-dance 0.5s ease-in-out infinite alternate;
+    animation-delay: calc(var(--i) * 0.07s);
+}
+
+@keyframes mic-dance {
+    from { height: 4px;  opacity: 0.4; }
+    to   { height: 18px; opacity: 1; }
+}
+
+/* ── CORNER DECORATIONS ───────────────────────────────── */
+.corner {
+    position: absolute;
+    width: 16px;
+    height: 16px;
+}
+
+.corner-tl { top: 2px;  left: 2px;  border-top: 2px solid var(--cyan); border-left:  2px solid var(--cyan); }
+.corner-tr { top: 2px;  right: 2px; border-top: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+.corner-bl { bottom: 2px; left: 2px;  border-bottom: 2px solid var(--cyan); border-left:  2px solid var(--cyan); }
+.corner-br { bottom: 2px; right: 2px; border-bottom: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
+
+/* ── RESPONSE PANEL ───────────────────────────────────── */
+/* Section 4/11 of this refinement pass: the panel now flexes to fill
+   whatever vertical space is left in .panel-center after the reactor,
+   reactor-meta strip, and command bar take their fixed share — instead
+   of a small fixed-height box with lots of empty space below it. The
+   page itself never grows; response-text scrolls internally (below). */
+.response-panel {
+    background: linear-gradient(180deg, rgba(0, 34, 58, 0.65), rgba(0, 14, 26, 0.75));
+    border: 1px solid var(--border);
+    padding: 14px 16px;
+    margin-top: 10px;
+    position: relative;
+    overflow: hidden;
+    flex: 1 1 auto;
+    /* Section 5/6 of the viewport fix: this is the one element in the
+       center column that's SUPPOSED to absorb a short viewport (the
+       reactor and command bar are meant to stay put) — so its floor is
+       low enough that it can compress a long way before there's
+       nothing left to give, rather than being the thing that forces
+       the command bar off-screen. */
+    min-height: 90px;
+    display: flex;
+    flex-direction: column;
+    clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 12px, 100% 100%, 0 100%);
+    box-shadow: inset 0 0 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(0, 212, 255, 0.08);
+}
+
+.response-panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+    opacity: 0.6;
+}
+
+.response-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+
+.response-label {
+    font-size: 10px;
+    letter-spacing: 0.15em;
+    color: var(--text-secondary);
+}
+
+.response-status {
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    color: var(--warning);
+    text-shadow: 0 0 6px var(--warning);
+}
+
+.response-status.active {
+    color: var(--success);
+    text-shadow: 0 0 6px var(--success);
+    animation: blink 1s step-end infinite;
+}
+
+/* Live step progress for debug investigations / code analysis — see
+   index.html's #response-progress comment for why this exists as a
+   real element rather than nothing at all. */
+.response-progress {
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--warning);
+    text-shadow: 0 0 6px var(--warning);
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(0, 212, 255, 0.1);
+    animation: thinking-pulse 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+}
+
+.response-text {
+    font-size: 14px;
+    color: var(--cyan);
+    line-height: 1.65;
+    min-height: 40px;
+    /* .response-panel is now itself a flex column that grows to fill
+       .panel-center's leftover vertical space (see .response-panel
+       above), and this is its one flexible child — flex:1/min-height:0
+       lets it claim all of that space while still capping itself at
+       the panel's actual rendered height and scrolling internally,
+       rather than a fixed max-height that left the extra room unused. */
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overflow-wrap: break-word;
+    word-break: break-word;
+    white-space: pre-wrap;
+    padding-right: 6px;
+    text-shadow: 0 0 8px rgba(0, 212, 255, 0.3);
+    transition: all 0.3s;
+}
+
+.response-text::-webkit-scrollbar { width: 3px; }
+.response-text::-webkit-scrollbar-track { background: transparent; }
+.response-text::-webkit-scrollbar-thumb {
+    background: var(--cyan-dim);
+    border-radius: 2px;
+}
+
+.response-text.thinking {
+    color: var(--text-secondary);
+    animation: thinking-pulse 1s ease-in-out infinite;
+}
+
+/* Once Markdown is rendered (see app.js's updateResponsePanel), let
+   block-level HTML (p/ul/table/pre) control spacing instead of the
+   plain-text pre-wrap used while the reply is still typing out. */
+.response-text.markdown-body {
+    white-space: normal;
+}
+.response-text.markdown-body pre,
+.response-text.markdown-body code {
+    white-space: pre;
+}
+
+@keyframes thinking-pulse {
+    0%, 100% { opacity: 1; }
+    50%       { opacity: 0.4; }
+}
+
+/* ── INPUT ROW ────────────────────────────────────────── */
+.input-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    flex-shrink: 0;
+}
+
+.input-wrapper {
+    flex: 1;
+    position: relative;
+}
+
+.chat-input {
+    width: 100%;
+    background: var(--blue-card);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--cyan);
+    font-family: var(--font);
+    font-size: 12px;
+    padding: 10px 14px;
+    outline: none;
+    letter-spacing: 0.05em;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.chat-input::placeholder { color: var(--text-dim); }
+
+.chat-input:focus {
+    border-color: var(--cyan);
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.2);
+}
+
+.send-btn {
+    width: 40px;
+    height: 40px;
+    background: rgba(0, 212, 255, 0.1);
+    border: 1px solid var(--border-bright);
+    border-radius: 4px;
+    color: var(--cyan);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.send-btn svg { width: 16px; height: 16px; }
+
+.send-btn:hover {
+    background: rgba(0, 212, 255, 0.2);
+    box-shadow: 0 0 12px rgba(0, 212, 255, 0.3);
+    border-color: var(--cyan);
+}
+
+/* ── MIC SHORTCUT BUTTON (command bar) ────────────────────
+   Section 7 of the redesign: [attachment][input][mic][send]. Calls
+   the same toggleVoice() as the reactor's own voice button — not a
+   second voice pipeline, just a second entry point into it. */
+.mic-shortcut-btn {
+    width: 40px;
+    height: 40px;
+    background: rgba(0, 212, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+.mic-shortcut-btn svg { width: 16px; height: 16px; }
+.mic-shortcut-btn:hover,
+.mic-shortcut-btn:focus-visible {
+    background: rgba(0, 212, 255, 0.15);
+    border-color: var(--cyan);
+    color: var(--cyan);
+}
+
+/* ── FILE UPLOAD BUTTON ───────────────────────────────── */
+.file-input-hidden {
+    /* Native picker stays functional (still focusable/clickable via
+       .click() from the visible button) but fully invisible — no
+       custom picker UI to build or keep in sync. */
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.upload-btn {
+    width: 40px;
+    height: 40px;
+    background: rgba(0, 212, 255, 0.05);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.upload-btn svg { width: 16px; height: 16px; }
+
+.upload-btn:hover,
+.upload-btn:focus-visible {
+    background: rgba(0, 212, 255, 0.15);
+    border-color: var(--cyan);
+    color: var(--cyan);
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.25);
+    outline: none;
+}
+
+/* ── FILE ATTACHMENT CHIP ──────────────────────────────
+   Rendered as an absolutely-positioned overlay directly above the
+   input (.input-wrapper is already position:relative), so a selected
+   file never adds height to the fixed-height panel-center flex column
+   — it only ever draws on top, and removing the file removes it with
+   no layout shift underneath. */
+.file-chip {
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    right: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--blue-card);
+    border: 1px solid var(--border-bright);
+    border-radius: 4px;
+    padding: 6px 8px;
+    font-size: 10px;
+    color: var(--cyan);
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.15);
+    animation: fadeIn 0.2s ease;
+    z-index: 5;
+}
+
+.file-chip-icon { flex-shrink: 0; }
+
+.file-chip-thumb {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    object-fit: cover;
+    border-radius: 3px;
+    border: 1px solid rgba(0, 212, 255, 0.3);
+}
+
+.file-chip-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.file-chip-status {
+    flex-shrink: 0;
+    font-size: 9px;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+}
+
+.file-chip-remove {
+    flex-shrink: 0;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 2px;
+    transition: color 0.2s;
+}
+.file-chip-remove:hover { color: var(--danger); }
+
+.file-chip.uploading { border-color: var(--warning); }
+.file-chip.uploading .file-chip-status {
+    color: var(--warning);
+    animation: thinking-pulse 1s ease-in-out infinite;
+}
+
+.file-chip.success { border-color: var(--success); }
+.file-chip.success .file-chip-status { color: var(--success); }
+
+.file-chip.error { border-color: var(--danger); }
+.file-chip.error .file-chip-status { color: var(--danger); }
+
+/* Small attachment tag shown inside a chat bubble when the message
+   that was sent included a file. */
+.bubble-attachment {
+    margin-top: 4px;
+    font-size: 9px;
+    opacity: 0.7;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Section 10: inline image rendering inside a chat bubble ────
+   Aspect ratio preserved, capped size, never overflows the bubble,
+   click-to-expand, loading/error states. */
+.bubble-image-wrap {
+    margin-top: 6px;
+    max-width: 100%;
+}
+
+.bubble-image {
+    display: block;
+    max-width: 100%;
+    max-height: 220px;
+    width: auto;
+    height: auto;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 212, 255, 0.25);
+    cursor: zoom-in;
+    object-fit: contain;
+    background: rgba(0, 20, 35, 0.6);
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.bubble-image:hover {
+    border-color: var(--cyan);
+    box-shadow: 0 0 10px rgba(0, 212, 255, 0.25);
+}
+.bubble-image.loading {
+    min-height: 60px;
+    min-width: 60px;
+    opacity: 0.4;
+    animation: thinking-pulse 1s ease-in-out infinite;
+}
+.bubble-image-error {
+    font-size: 10px;
+    color: var(--danger, #ff5566);
+    padding: 6px 8px;
+    border: 1px dashed rgba(255, 85, 102, 0.4);
+    border-radius: 4px;
+}
+
+/* ── Click-to-expand lightbox ─────────────────────────── */
+.image-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+.image-lightbox.open { display: flex; }
+.image-lightbox-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 6, 12, 0.88);
+    backdrop-filter: blur(2px);
+}
+.image-lightbox-content {
+    position: relative;
+    z-index: 1;
+    max-width: 90vw;
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+}
+.image-lightbox-content img {
+    max-width: 90vw;
+    max-height: 78vh;
+    object-fit: contain;
+    border: 1px solid var(--border-bright);
+    border-radius: 4px;
+    box-shadow: 0 0 30px rgba(0, 212, 255, 0.25);
+}
+.image-lightbox-caption {
+    font-size: 11px;
+    color: var(--cyan);
+    opacity: 0.8;
+    letter-spacing: 0.05em;
+}
+.image-lightbox-close {
+    position: absolute;
+    top: -14px;
+    right: -14px;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    background: var(--blue-card);
+    border: 1px solid var(--border-bright);
+    color: var(--cyan);
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+}
+.image-lightbox-close:hover { color: var(--danger, #ff5566); }
+
+/* ── Section 5: Markdown rendering ───────────────────────
+   Applied to .bubble-text.markdown-body (assistant chat bubbles) and
+   #response-text.markdown-body (JARVIS RESPONSE panel). Keeps the
+   existing cyan/monospace HUD look — just gives structure to headings,
+   lists, tables, and code. */
+.markdown-body { line-height: 1.6; }
+.markdown-body p { margin: 0 0 8px 0; }
+.markdown-body p:last-child { margin-bottom: 0; }
+.markdown-body h1, .markdown-body h2, .markdown-body h3,
+.markdown-body h4, .markdown-body h5, .markdown-body h6 {
+    margin: 10px 0 6px 0;
+    color: var(--cyan);
+    text-shadow: 0 0 6px rgba(0, 212, 255, 0.3);
+    letter-spacing: 0.04em;
+}
+.markdown-body h1 { font-size: 15px; }
+.markdown-body h2 { font-size: 14px; }
+.markdown-body h3, .markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 13px; }
+.markdown-body strong { color: var(--text-primary); font-weight: 700; }
+.markdown-body em { font-style: italic; }
+.markdown-body ul, .markdown-body ol {
+    margin: 4px 0 8px 0;
+    padding-left: 20px;
+}
+.markdown-body li { margin: 2px 0; }
+.markdown-body blockquote {
+    margin: 6px 0;
+    padding: 4px 10px;
+    border-left: 3px solid var(--cyan-dim);
+    color: var(--text-secondary);
+    background: rgba(0, 212, 255, 0.05);
+}
+.markdown-body table {
+    border-collapse: collapse;
+    margin: 8px 0;
+    font-size: 11px;
+    width: 100%;
+    overflow-x: auto;
+    display: block;
+}
+.markdown-body th, .markdown-body td {
+    border: 1px solid rgba(0, 212, 255, 0.2);
+    padding: 4px 8px;
+    text-align: left;
+}
+.markdown-body th {
+    background: rgba(0, 212, 255, 0.08);
+    color: var(--cyan);
+}
+.markdown-body a {
+    color: var(--cyan);
+    text-decoration: underline;
+}
+.markdown-body code {
+    font-family: "Courier New", monospace;
+    background: rgba(0, 212, 255, 0.08);
+    border-radius: 3px;
+    padding: 1px 4px;
+    font-size: 0.95em;
+}
+.markdown-body pre {
+    position: relative;
+    margin: 8px 0;
+    padding: 10px 12px;
+    background: rgba(0, 10, 20, 0.85);
+    border: 1px solid rgba(0, 212, 255, 0.2);
+    border-radius: 4px;
+    overflow-x: auto;
+    max-width: 100%;
+}
+.markdown-body pre code {
+    background: none;
+    padding: 0;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre;
+}
+.markdown-body pre::-webkit-scrollbar { height: 4px; }
+.markdown-body pre::-webkit-scrollbar-thumb { background: var(--cyan-dim); border-radius: 2px; }
+
+.code-copy-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    font-size: 9px;
+    letter-spacing: 0.05em;
+    padding: 3px 7px;
+    background: rgba(0, 212, 255, 0.1);
+    border: 1px solid var(--border-bright);
+    border-radius: 3px;
+    color: var(--cyan);
+    cursor: pointer;
+    opacity: 0.7;
+    transition: opacity 0.2s, background 0.2s;
+}
+.code-copy-btn:hover { opacity: 1; background: rgba(0, 212, 255, 0.2); }
+
+/* ── Section 21: "new messages" indicator (shown only when the user
+   has scrolled up and a new assistant message arrives below) ────── */
+.new-messages-indicator {
+    display: none;
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 4;
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    padding: 5px 12px;
+    background: var(--blue-card);
+    border: 1px solid var(--border-bright);
+    border-radius: 999px;
+    color: var(--cyan);
+    cursor: pointer;
+    box-shadow: 0 0 12px rgba(0, 212, 255, 0.3);
+    animation: fadeIn 0.2s ease;
+}
+.new-messages-indicator.visible { display: block; }
+#conversation-panel { position: relative; }
+
+/* ── CONFIRM-TIER TOOL REQUESTS ──────────────────────────
+   Section 13/15: a real Allow/Deny prompt for any pending CONFIRM tool
+   (terminal commands, git commits, screen capture, security scans,
+   junk cleanup) — rendered inline in the existing conversation panel,
+   not a new dashboard/modal. */
+.confirmation-bubble {
+    border: 1px solid var(--warning);
+    background: rgba(255, 184, 0, 0.05);
+}
+
+.confirmation-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.confirm-btn {
+    flex: 1;
+    padding: 6px 10px;
+    font-family: var(--font);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.confirm-btn:disabled { opacity: 0.4; cursor: default; }
+
+.confirm-allow {
+    background: rgba(0, 255, 136, 0.1);
+    border: 1px solid var(--success);
+    color: var(--success);
+}
+.confirm-allow:hover:not(:disabled) { background: rgba(0, 255, 136, 0.2); }
+
+.confirm-deny {
+    background: rgba(255, 68, 68, 0.1);
+    border: 1px solid var(--danger);
+    color: var(--danger);
+}
+.confirm-deny:hover:not(:disabled) { background: rgba(255, 68, 68, 0.2); }
+
+.confirmation-status {
+    margin-top: 6px;
+    font-size: 9px;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    min-height: 12px;
+}
+
+/* ── CONVERSATION LIST ────────────────────────────────── */
+.conversation-list {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-right: 4px;
+}
+
+.conversation-list::-webkit-scrollbar { width: 3px; }
+.conversation-list::-webkit-scrollbar-track { background: transparent; }
+.conversation-list::-webkit-scrollbar-thumb {
+    background: var(--cyan-dim);
+    border-radius: 2px;
+}
+
+.chat-bubble {
+    padding: 9px 12px;
+    border-radius: 4px;
+    font-size: 12.5px;
+    line-height: 1.55;
+    animation: fadeIn 0.3s ease;
+    max-width: 95%;
+    min-width: 0;
+}
+
+/* FIX: long unbroken strings (URLs, hashes, stack traces) previously
+   had nothing telling them to wrap, so they overflowed straight past
+   the bubble's max-width instead of respecting it. white-space:pre-wrap
+   additionally keeps deliberate line breaks (e.g. in code JARVIS
+   quotes back) intact instead of collapsing them. */
+.bubble-text {
+    overflow-wrap: break-word;
+    word-break: break-word;
+    white-space: pre-wrap;
+}
+.bubble-text.markdown-body {
+    white-space: normal;
+}
+.bubble-text.markdown-body pre,
+.bubble-text.markdown-body code {
+    white-space: pre;
+}
+
+.chat-bubble.user {
+    background: rgba(0, 212, 255, 0.08);
+    border: 1px solid rgba(0, 212, 255, 0.2);
+    border-left: 3px solid var(--cyan);
+    align-self: flex-end;
+    color: var(--text-primary);
+}
+
+.chat-bubble.assistant {
+    background: rgba(0, 40, 70, 0.8);
+    border: 1px solid rgba(0, 212, 255, 0.15);
+    border-left: 3px solid rgba(0, 212, 255, 0.4);
+    align-self: flex-start;
+    color: var(--text-secondary);
+}
+
+.bubble-role {
+    font-size: 8px;
+    letter-spacing: 0.15em;
+    margin-bottom: 4px;
+    opacity: 0.6;
+}
+
+.bubble-time {
+    font-size: 8px;
+    opacity: 0.4;
+    margin-top: 4px;
+    text-align: right;
+}
+
+/* ── QUICK COMMANDS ───────────────────────────────────── */
+.quick-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+}
+
+.quick-btn {
+    background: transparent;
+    border: 1px solid rgba(0, 212, 255, 0.12);
+    color: var(--text-dim);
+    font-family: var(--font);
+    font-size: 8.5px;
+    letter-spacing: 0.07em;
+    padding: 5px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+}
+
+.quick-btn:hover {
+    border-color: var(--cyan);
+    color: var(--cyan);
+    background: var(--cyan-glow);
+    box-shadow: 0 0 8px var(--cyan-glow);
+}
+
+/* ── WAVEFORM CANVAS ──────────────────────────────────── */
+#waveform-canvas {
+    width: 100%;
+    display: block;
+    margin-top: 4px;
+}
+
+/* ── CENTER PANEL FLEX ────────────────────────────────── */
+.panel-center {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 16px;
+    overflow: hidden;
+}
+
+/* ── SCROLLBAR GLOBAL ─────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: var(--cyan-dim);
+    border-radius: 2px;
+}
+
+/* ── TYPING CURSOR ────────────────────────────────────── */
+.typing-cursor::after {
+    content: '▋';
+    animation: blink 0.8s step-end infinite;
+    color: var(--cyan);
+}
+
+/* ── RESPONSIVE ────────────────────────────────────────
+   No breakpoints existed before this — the 3-column grid was fixed at
+   280px/1fr/280px with html/body at overflow:hidden, which is fine on
+   desktop but guarantees horizontal overflow/clipped panels below
+   ~900px. These breakpoints only change how the SAME panels reflow
+   (stacked instead of side-by-side, HUD scaled down) — no colors,
+   fonts, borders, or components are added, removed, or restyled. */
+@media (max-width: 900px) {
+    html, body {
+        height: auto;
+        min-height: 100vh;
+        overflow-x: hidden;
+        overflow-y: auto;
+    }
+
+    .jarvis-shell {
+        height: auto;
+        min-height: 100vh;
+        overflow: visible;
+    }
+
+    .app-header {
+        flex-wrap: wrap;
+        row-gap: 8px;
+    }
+
+    .jarvis-layout {
+        grid-template-columns: 1fr;
+        height: auto;
+        min-height: 100vh;
+        overflow: visible;
+    }
+
+    .panel {
+        overflow: visible;
+    }
+
+    .panel-center { order: 1; }
+    .panel-left   { order: 2; }
+    .panel-right  { order: 3; }
+
+    /* Cards no longer live inside a fixed-height column, so their
+       flex:1 "grow to fill available space" behavior has no ceiling —
+       give the two lists their own cap so LIVE CONVERSATION / SYSTEM
+       LOG scroll internally instead of stretching the whole page. */
+    .card-grow {
+        max-height: 320px;
+    }
+
+    .hud-wrapper {
+        --reactor: 280px;
+    }
+}
+
+@media (max-width: 480px) {
+    .hud-wrapper {
+        --reactor: 220px;
+    }
+
+    .quick-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .chat-bubble {
+        max-width: 100%;
+    }
+}

@@ -1,0 +1,71 @@
+# ============================================================
+# J.A.R.V.I.S. .gitignore
+# ============================================================
+
+# --- Secrets (CRITICAL — never commit this) -----------------
+# Your .env has real API keys, Gmail app password, and LiveKit
+# credentials in it. If you accidentally commit this once, it's
+# in your git history forever, even if you delete it in a later
+# commit. Double-check with `git status` before every commit
+# that .env never shows up as "to be committed".
+.env
+.env.*
+!.env.example
+
+# --- Python -------------------------------------------------
+venv/
+env/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- AI models & voice models (large binary files) -----------
+# These are multi-GB/multi-MB downloads, not source code —
+# don't bloat the repo with them. Document how to get them in
+# your README instead (ollama pull ..., piper voice download).
+models/*.onnx
+models/*.onnx.json
+*.onnx
+*.onnx.json
+
+# --- Databases / local data ----------------------------------
+*.db
+*.sqlite
+*.sqlite3
+jarvis_memory.db
+
+# --- Logs -----------------------------------------------------
+*.log
+logs/
+
+# --- Local voice server (if you download the binary locally) --
+livekit-server
+livekit-server.exe
+livekit/
+
+# --- Frontend ---------------------------------------------------
+node_modules/
+dist/
+build/
+
+# --- IDE / editor -----------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS-generated files -------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Test artifacts -----------------------------------------------
+.coverage
+htmlcov/
+*.cover

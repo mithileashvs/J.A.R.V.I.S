@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>JARVIS — Phase 1 Self-Check</title>
+<style>
+    :root {
+        --cyan: #00d4ff;
+        --cyan-dim: rgba(0, 212, 255, 0.4);
+        --bg: #030812;
+        --panel: #05101f;
+        --border: rgba(0, 212, 255, 0.25);
+        --ok: #00ff9d;
+        --fail: #ff3b5c;
+        --pending: #ffb000;
+        --text-dim: rgba(180, 220, 240, 0.55);
+    }
+    * { box-sizing: border-box; }
+    body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--cyan);
+        font-family: "Consolas", "SF Mono", monospace;
+        padding: 32px;
+        min-height: 100vh;
+    }
+    h1 {
+        font-size: 18px;
+        letter-spacing: 0.25em;
+        margin: 0 0 4px 0;
+        text-shadow: 0 0 12px var(--cyan-dim);
+    }
+    .subtitle {
+        color: var(--text-dim);
+        font-size: 12px;
+        letter-spacing: 0.1em;
+        margin-bottom: 24px;
+    }
+    .toolbar {
+        display: flex;
+        gap: 12px;
+        align-items: center;
+        margin-bottom: 24px;
+    }
+    input {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        color: var(--cyan);
+        padding: 8px 12px;
+        font-family: inherit;
+        font-size: 12px;
+        border-radius: 4px;
+        width: 220px;
+    }
+    button {
+        background: rgba(0, 212, 255, 0.1);
+        border: 1px solid var(--cyan);
+        color: var(--cyan);
+        padding: 9px 18px;
+        font-family: inherit;
+        font-size: 12px;
+        letter-spacing: 0.1em;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    button:hover { background: rgba(0, 212, 255, 0.2); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .summary {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 24px;
+        font-size: 12px;
+    }
+    .summary span { color: var(--text-dim); }
+    .summary b { color: var(--cyan); }
+
+    .check {
+        border: 1px solid var(--border);
+        background: var(--panel);
+        border-radius: 6px;
+        padding: 14px 18px;
+        margin-bottom: 10px;
+        display: flex;
+        align-items: flex-start;
+        gap: 14px;
+    }
+    .status-dot {
+        width: 10px; height: 10px;
+        border-radius: 50%;
+        margin-top: 4px;
+        flex-shrink: 0;
+        background: #444;
+        box-shadow: 0 0 6px #444;
+        transition: all 0.3s;
+    }
+    .status-dot.pass { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+    .status-dot.fail { background: var(--fail); box-shadow: 0 0 8px var(--fail); }
+    .status-dot.running {
+        background: var(--pending); box-shadow: 0 0 8px var(--pending);
+        animation: pulse 0.8s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .check-body { flex: 1; }
+    .check-name { font-size: 13px; font-weight: bold; margin-bottom: 3px; }
+    .check-desc { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; }
+    .check-detail {
+        font-size: 11px;
+        color: var(--text-dim);
+        background: rgba(0,0,0,0.3);
+        border-radius: 4px;
+        padding: 8px 10px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        display: none;
+    }
+    .check-detail.show { display: block; }
+    .check.fail .check-detail { color: var(--fail); }
+</style>
+</head>
+<body>
+
+<h1>J.A.R.V.I.S — PHASE 1 SELF-CHECK</h1>
+<div class="subtitle">Verifies the state machine, tool registry, and permission system are actually wired up and working — not just present in the code.</div>
+<div class="subtitle" style="color: var(--pending); margin-top: 6px;">
+    ⚠ One check really launches Notepad on the backend machine (proving CONFIRM-tier tools work end to end).
+    If Notepad has "restore previous session" enabled, it may reopen whatever file you last had open in it —
+    close anything sensitive in Notepad before running this.
+</div>
+
+<div class="toolbar">
+    <input id="backend-url" value="http://localhost:8000" />
+    <button id="run-btn" onclick="runAllChecks()">▶ RUN ALL CHECKS</button>
+</div>
+
+<div class="summary" id="summary"></div>
+
+<div id="checks"></div>
+
+<script>
+const CHECKS = [
+    { id: "backend-reachable", name: "Backend reachable", desc: "GET /status responds" },
+    { id: "state-endpoint", name: "State machine endpoint", desc: "GET /state returns a valid JarvisState" },
+    { id: "tools-endpoint", name: "Tool registry populated", desc: "GET /tools lists the expected SAFE/CONFIRM tools" },
+    { id: "safe-tool-runs", name: "SAFE tool runs immediately", desc: "POST /tools/run on a SAFE tool returns ok/error, not pending_confirmation" },
+    { id: "confirm-tool-blocks", name: "CONFIRM tool requires confirmation", desc: "POST /tools/run on open_application returns pending_confirmation, does NOT execute" },
+    { id: "confirm-deny-blocks", name: "Denying a confirmation blocks execution", desc: "POST /confirmations/{id} with approved:false does not run the tool" },
+    { id: "confirm-approve-runs", name: "Approving a confirmation runs the tool", desc: "POST /confirmations/{id} with approved:true executes it" },
+    { id: "unknown-tool-handled", name: "Unknown tool handled cleanly", desc: "POST /tools/run on a bogus tool name returns a clean error, not a 500" },
+    { id: "state-returns-idle", name: "State returns to IDLE after a run", desc: "GET /state settles back to IDLE once tool calls finish" },
+];
+
+function renderChecks() {
+    const container = document.getElementById("checks");
+    container.innerHTML = "";
+    for (const c of CHECKS) {
+        const div = document.createElement("div");
+        div.className = "check";
+        div.id = "check-" + c.id;
+        div.innerHTML = `
+            <div class="status-dot" id="dot-${c.id}"></div>
+            <div class="check-body">
+                <div class="check-name">${c.name}</div>
+                <div class="check-desc">${c.desc}</div>
+                <div class="check-detail" id="detail-${c.id}"></div>
+            </div>
+        `;
+        container.appendChild(div);
+    }
+}
+
+function setCheckState(id, state, detail) {
+    const dot = document.getElementById("dot-" + id);
+    const box = document.getElementById("check-" + id);
+    const detailEl = document.getElementById("detail-" + id);
+    dot.className = "status-dot " + state;
+    box.className = "check " + state;
+    if (detail) {
+        detailEl.textContent = detail;
+        detailEl.classList.add("show");
+    }
+}
+
+function updateSummary() {
+    const total = CHECKS.length;
+    const passed = document.querySelectorAll(".status-dot.pass").length;
+    const failed = document.querySelectorAll(".status-dot.fail").length;
+    document.getElementById("summary").innerHTML =
+        `<span><b>${passed}</b>/${total} passed</span>` +
+        (failed ? `<span style="color:var(--fail)"><b>${failed}</b> failed</span>` : "");
+}
+
+async function runAllChecks() {
+    const btn = document.getElementById("run-btn");
+    btn.disabled = true;
+    renderChecks();
+
+    const base = document.getElementById("backend-url").value.replace(/\/$/, "");
+
+    // Track state as checks progress so later checks can reuse earlier results.
+    let backendOk = false;
+    let safeToolName = null;
+    let confirmationId = null;
+
+    async function step(id, fn) {
+        setCheckState(id, "running");
+        updateSummary();
+        try {
+            const detail = await fn();
+            setCheckState(id, "pass", detail || "");
+        } catch (e) {
+            setCheckState(id, "fail", e.message || String(e));
+        }
+        updateSummary();
+    }
+
+    // 1. Backend reachable
+    await step("backend-reachable", async () => {
+        const r = await fetch(base + "/status");
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        backendOk = true;
+        return JSON.stringify(data, null, 2);
+    });
+    if (!backendOk) { btn.disabled = false; return; }
+
+    // 2. State endpoint
+    await step("state-endpoint", async () => {
+        const r = await fetch(base + "/state");
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        const valid = ["IDLE","LISTENING","THINKING","EXECUTING","SPEAKING","ERROR"];
+        if (!valid.includes(data.state)) throw new Error(`Unexpected state value: ${data.state}`);
+        return JSON.stringify(data, null, 2);
+    });
+
+    // 3. Tools endpoint
+    let tools = [];
+    await step("tools-endpoint", async () => {
+        const r = await fetch(base + "/tools");
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        tools = data.tools || [];
+        const safe = tools.filter(t => t.permission === "SAFE" && t.implemented);
+        const confirm = tools.filter(t => t.permission === "CONFIRM" && t.implemented);
+        if (safe.length === 0) throw new Error("No implemented SAFE tools found");
+        if (confirm.length === 0) throw new Error("No implemented CONFIRM tools found");
+        safeToolName = safe.find(t => t.name === "get_weather")?.name || safe[0].name;
+        return `${tools.length} total | SAFE: ${safe.map(t=>t.name).join(", ")} | CONFIRM: ${confirm.map(t=>t.name).join(", ")}`;
+    });
+
+    // 4. SAFE tool runs immediately
+    await step("safe-tool-runs", async () => {
+        if (!safeToolName) throw new Error("No SAFE tool available to test (previous step failed)");
+        const args = safeToolName === "get_weather" ? { city: "London" } : {};
+        const r = await fetch(base + "/tools/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: safeToolName, args }),
+        });
+        const data = await r.json();
+        if (data.status === "pending_confirmation") {
+            throw new Error(`SAFE tool '${safeToolName}' incorrectly required confirmation`);
+        }
+        return `${safeToolName} -> status: ${data.status}`;
+    });
+
+    // 5. CONFIRM tool requires confirmation (open_application, does NOT actually launch anything you don't approve)
+    await step("confirm-tool-blocks", async () => {
+        const r = await fetch(base + "/tools/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "open_application", args: { app_name: "notepad" } }),
+        });
+        const data = await r.json();
+        if (data.status !== "pending_confirmation") {
+            throw new Error(`Expected pending_confirmation, got: ${data.status}`);
+        }
+        if (!data.confirmation_id) throw new Error("No confirmation_id returned");
+        confirmationId = data.confirmation_id;
+        return JSON.stringify(data, null, 2);
+    });
+
+    // 6. Denying blocks execution
+    await step("confirm-deny-blocks", async () => {
+        if (!confirmationId) throw new Error("No confirmation_id from previous step");
+        const r = await fetch(base + `/confirmations/${confirmationId}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ approved: false }),
+        });
+        const data = await r.json();
+        if (data.approved !== false) throw new Error("Confirmation was not recorded as denied");
+        if (data.execution) throw new Error("Tool executed despite being denied");
+        return JSON.stringify(data, null, 2);
+    });
+
+    // 7. Approving runs it (fresh confirmation — the denied one above is already resolved)
+    await step("confirm-approve-runs", async () => {
+        const r1 = await fetch(base + "/tools/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "open_application", args: { app_name: "notepad" } }),
+        });
+        const d1 = await r1.json();
+        if (d1.status !== "pending_confirmation") throw new Error("Could not get a fresh confirmation to approve");
+
+        const r2 = await fetch(base + `/confirmations/${d1.confirmation_id}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ approved: true }),
+        });
+        const d2 = await r2.json();
+        if (!d2.execution) throw new Error("Approval did not trigger execution");
+        return `Note: this really does attempt to open Notepad on the backend machine.\n` + JSON.stringify(d2, null, 2);
+    });
+
+    // 8. Unknown tool handled cleanly
+    await step("unknown-tool-handled", async () => {
+        const r = await fetch(base + "/tools/run", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ tool: "definitely_not_a_real_tool", args: {} }),
+        });
+        if (r.status >= 500) throw new Error(`Backend returned HTTP ${r.status} instead of a clean error`);
+        const data = await r.json();
+        if (data.status !== "error") throw new Error(`Expected status:error, got: ${JSON.stringify(data)}`);
+        return JSON.stringify(data, null, 2);
+    });
+
+    // 9. State returns to IDLE
+    await step("state-returns-idle", async () => {
+        const r = await fetch(base + "/state");
+        const data = await r.json();
+        if (data.state !== "IDLE") throw new Error(`Expected IDLE, backend is stuck in: ${data.state}`);
+        return JSON.stringify(data, null, 2);
+    });
+
+    btn.disabled = false;
+}
+
+// Clicking a check's row toggles its detail panel (useful for the ones that pass without you needing to see the JSON).
+document.addEventListener("click", (e) => {
+    const check = e.target.closest(".check");
+    if (!check) return;
+    const detail = check.querySelector(".check-detail");
+    if (detail && detail.textContent) detail.classList.toggle("show");
+});
+
+renderChecks();
+</script>
+
+</body>
+</html>

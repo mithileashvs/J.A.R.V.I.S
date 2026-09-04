@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>J.A.R.V.I.S</title>
+    <link rel="stylesheet" href="style.css" />
+    <!-- Section 5: Markdown rendering for JARVIS responses (headings,
+         bold/italic, lists, tables, code blocks with syntax
+         highlighting) + DOMPurify to sanitize the rendered HTML before
+         it's ever inserted into the DOM. Loaded from cdnjs per this
+         environment's allowed script sources; app.js degrades to plain
+         text if either fails to load (see renderMarkdown()). -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.5/purify.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+</head>
+<body>
+
+<!-- ── SCANLINE OVERLAY ─────────────────────────────────── -->
+<div class="scanlines"></div>
+
+<!-- ── PARTICLE FIELD ──────────────────────────────────── -->
+<canvas id="particle-canvas"></canvas>
+
+<div class="jarvis-shell">
+
+<!-- ── TOP HEADER ───────────────────────────────────────── -->
+<header class="app-header">
+    <div class="header-brand">
+        <div class="brand-title">J.A.R.V.I.S<span class="brand-dot">.</span></div>
+        <div class="brand-subtitle">JUST A RATHER VERY INTELLIGENT SYSTEM</div>
+    </div>
+    <div class="header-clock">
+        <div class="header-clock-time" id="clock-display">00:00:00</div>
+        <div class="header-clock-date" id="date-display">—</div>
+    </div>
+    <div class="header-meta">
+        <span class="header-session">SESSION <span id="session-id-display">—</span></span>
+        <button class="proactive-toggle" id="proactive-toggle" type="button" title="Toggle proactive intelligence">
+            <span class="proactive-toggle-dot" id="proactive-toggle-dot"></span>
+            PROACTIVE
+        </button>
+        <span class="status-dot" id="dot-backend"></span>
+    </div>
+</header>
+
+<!-- Section 9: compact HUD-style proactive notifications — fixed,
+     floating, never covers the reactor/command bar/conversation. -->
+<div id="proactive-toast-stack" class="proactive-toast-stack"></div>
+
+<!-- ── MAIN LAYOUT ─────────────────────────────────────── -->
+<div class="jarvis-layout">
+
+    <!-- LEFT PANEL -->
+    <div class="panel panel-left">
+
+        <!-- System Overview -->
+        <div class="card" id="system-info">
+            <div class="card-header">
+                <span class="card-title">SYSTEM OVERVIEW</span>
+            </div>
+            <div class="info-grid">
+                <div class="info-row">
+                    <span class="ov-icon">◈</span>
+                    <span class="info-label">BACKEND</span>
+                    <span class="info-value" id="status-backend">INITIALISING</span>
+                </div>
+                <div class="info-row">
+                    <span class="ov-icon">◇</span>
+                    <span class="info-label">AGENT</span>
+                    <span class="info-value" id="status-agent">INITIALISING</span>
+                </div>
+                <div class="info-row">
+                    <span class="ov-icon">◆</span>
+                    <span class="info-label">LIVEKIT</span>
+                    <span class="info-value" id="status-livekit">INITIALISING</span>
+                </div>
+                <div class="info-row">
+                    <span class="ov-icon">◉</span>
+                    <span class="info-label">OLLAMA</span>
+                    <span class="info-value" id="status-gemini">INITIALISING</span>
+                </div>
+                <div class="info-row">
+                    <span class="ov-icon">◎</span>
+                    <span class="info-label">WEBSOCKET</span>
+                    <span class="info-value" id="status-ws">CONNECTING</span>
+                </div>
+                <div class="info-row">
+                    <span class="ov-icon">▣</span>
+                    <span class="info-label">AGENT PID</span>
+                    <span class="info-value" id="status-pid">—</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Core Modules -->
+        <div class="card" id="core-modules-card">
+            <div class="card-header">
+                <span class="card-title">CORE MODULES</span>
+            </div>
+            <div class="module-list">
+                <div class="module-row" id="mod-conversational">
+                    <span class="mod-icon">🗨</span>
+                    <span class="mod-label">Conversational Agent</span>
+                    <span class="mod-dot"></span>
+                    <span class="mod-status-label">—</span>
+                </div>
+                <div class="module-row" id="mod-code">
+                    <span class="mod-icon">⌨</span>
+                    <span class="mod-label">Code Assistant</span>
+                    <span class="mod-dot"></span>
+                    <span class="mod-status-label">—</span>
+                </div>
+                <div class="module-row" id="mod-vision">
+                    <span class="mod-icon">◉</span>
+                    <span class="mod-label">Vision Analyzer</span>
+                    <span class="mod-dot"></span>
+                    <span class="mod-status-label">—</span>
+                </div>
+                <div class="module-row" id="mod-architect">
+                    <span class="mod-icon">⌂</span>
+                    <span class="mod-label">System Architect</span>
+                    <span class="mod-dot"></span>
+                    <span class="mod-status-label">—</span>
+                </div>
+                <div class="module-row" id="mod-files">
+                    <span class="mod-icon">▤</span>
+                    <span class="mod-label">File Manager</span>
+                    <span class="mod-dot"></span>
+                    <span class="mod-status-label">—</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Memory Stats -->
+        <div class="card" id="memory-stats">
+            <div class="card-header">
+                <span class="card-title">MEMORY CORE</span>
+            </div>
+            <div class="info-grid">
+                <div class="info-row">
+                    <span class="ov-icon">Σ</span>
+                    <span class="info-label">TOTAL MSG</span>
+                    <span class="info-value" id="stat-total">0</span>
+                </div>
+                <div class="info-row">
+                    <span class="ov-icon">⌘</span>
+                    <span class="info-label">SESSIONS</span>
+                    <span class="info-value" id="stat-sessions">0</span>
+                </div>
+                <div class="info-row">
+                    <span class="ov-icon">◔</span>
+                    <span class="info-label">TODAY</span>
+                    <span class="info-value" id="stat-today">0</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Agent Controls -->
+        <div class="card" id="agent-controls">
+            <div class="card-header">
+                <span class="card-title">AGENT CONTROL</span>
+            </div>
+            <div class="btn-group">
+                <button class="hud-btn" onclick="restartAgent()">
+                    <span class="btn-icon">↺</span> RESTART
+                </button>
+                <button class="hud-btn hud-btn-danger" onclick="stopAgent()">
+                    <span class="btn-icon">■</span> STOP
+                </button>
+                <button class="hud-btn hud-btn-success" onclick="startAgent()">
+                    <span class="btn-icon">▶</span> START
+                </button>
+            </div>
+        </div>
+
+        <!-- System Events Log -->
+        <div class="card card-grow" id="events-panel">
+            <div class="card-header">
+                <span class="card-title">SYSTEM LOG</span>
+                <span class="blink-dot"></span>
+            </div>
+            <div class="log-list" id="events-list"></div>
+        </div>
+
+    </div>
+
+    <!-- CENTER PANEL: JARVIS HUD -->
+    <div class="panel panel-center">
+
+        <!-- HUD Rings -->
+        <div class="hud-wrapper">
+            <div class="hud-ring ring-outer">
+                <div class="ring-tick-container" id="tick-outer"></div>
+            </div>
+            <div class="hud-ring ring-tickmarks"></div>
+            <div class="hud-ring ring-mid">
+                <div class="ring-tick-container" id="tick-mid"></div>
+            </div>
+            <div class="hud-ring ring-inner"></div>
+            <div class="hud-ring ring-glow"></div>
+
+            <!-- Arc segments -->
+            <svg class="hud-svg" viewBox="0 0 400 400">
+                <circle class="arc-track" cx="200" cy="200" r="155"/>
+                <circle class="arc-progress" cx="200" cy="200" r="155" id="arc-progress"/>
+                <circle class="arc-track" cx="200" cy="200" r="120"/>
+                <circle class="arc-progress arc-progress-2" cx="200" cy="200" r="120" id="arc-progress-2"/>
+                <!-- Radial waveform: audio-reactive spikes drawn on r=90,
+                     between the arc rings and the voice button. Filled
+                     in each frame by drawRadialWaveform() in app.js. -->
+                <polygon class="radial-waveform" id="radial-waveform" points=""/>
+            </svg>
+
+            <!-- Center content -->
+            <div class="hud-center">
+                <!-- Voice button -->
+                <button class="voice-btn" id="voice-btn" onclick="toggleVoice()">
+                    <div class="voice-btn-ring"></div>
+                    <div class="voice-btn-ring voice-btn-ring-2"></div>
+                    <svg class="mic-icon" viewBox="0 0 24 24" fill="none"
+                         stroke="currentColor" stroke-width="2">
+                        <rect x="9" y="2" width="6" height="11" rx="3"/>
+                        <path d="M5 10a7 7 0 0 0 14 0"/>
+                        <line x1="12" y1="19" x2="12" y2="22"/>
+                        <line x1="8"  y1="22" x2="16" y2="22"/>
+                    </svg>
+                    <span class="voice-label" id="voice-label">ACTIVATE</span>
+
+                    <!-- Mic indicator: a child of voice-btn (not hud-center)
+                         so its "top: 100%+Npx" offset is anchored to the
+                         button's own bottom edge, same as voice-label just
+                         above — a sibling in hud-center would instead
+                         measure against hud-center's total stacked height,
+                         which happened to look right by coincidence but
+                         breaks the moment hud-center's other children
+                         change size. -->
+                    <div class="mic-indicator" id="mic-indicator">
+                        <div class="mic-bar" style="--i:0"></div>
+                        <div class="mic-bar" style="--i:1"></div>
+                        <div class="mic-bar" style="--i:2"></div>
+                        <div class="mic-bar" style="--i:3"></div>
+                        <div class="mic-bar" style="--i:4"></div>
+                        <div class="mic-bar" style="--i:5"></div>
+                        <div class="mic-bar" style="--i:6"></div>
+                    </div>
+                </button>
+            </div>
+
+            <!-- Corner decorations -->
+            <div class="corner corner-tl"></div>
+            <div class="corner corner-tr"></div>
+            <div class="corner corner-bl"></div>
+            <div class="corner corner-br"></div>
+        </div>
+
+        <!-- Reactor status readout -->
+        <div class="reactor-meta">
+            <div class="reactor-meta-item">
+                <span class="meta-label">VOICE STATUS</span>
+                <span class="meta-value" id="voice-status-value">IDLE</span>
+            </div>
+            <div class="reactor-meta-item align-right">
+                <span class="meta-label">ACTIVE MODE</span>
+                <span class="meta-value" id="active-mode-value">ASSISTANT</span>
+            </div>
+        </div>
+
+        <!-- AI Response Panel -->
+        <div class="response-panel" id="response-panel">
+            <div class="response-header">
+                <span class="response-label">JARVIS RESPONSE</span>
+                <span class="response-status" id="response-status">STANDBY</span>
+            </div>
+            <!-- Live step-by-step progress for multi-step backend work
+                 (debug investigations, code analysis) — driven by real
+                 "backend_state" WebSocket messages from state.py, not a
+                 fake animation. Hidden whenever there's nothing to show. -->
+            <div class="response-progress" id="response-progress" style="display:none;"></div>
+            <div class="response-text" id="response-text">
+                Awaiting your command, Sir.
+            </div>
+        </div>
+
+        <!-- Text Input -->
+        <div class="input-row">
+            <!-- Native file input stays invisible; the upload button
+                 below just proxies clicks to it (see FILE UPLOAD block
+                 in app.js). -->
+            <input
+                type="file"
+                id="file-input"
+                class="file-input-hidden"
+                accept=".py,.js,.ts,.tsx,.jsx,.json,.txt,.md,.c,.cpp,.h,.hpp,.java,.html,.css,.yml,.yaml,.log,.jpg,.jpeg,.png,.webp,.pdf,.docx"
+                onchange="handleFileSelect(event)"
+                tabindex="-1"
+            />
+            <button
+                class="upload-btn"
+                type="button"
+                onclick="triggerFileSelect()"
+                title="Upload file"
+                aria-label="Upload file"
+            >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                </svg>
+            </button>
+
+            <div class="input-wrapper">
+                <!-- Attachment chip: hidden until a file is selected.
+                     Positioned as an overlay above the input (see
+                     .file-chip in style.css) so it never pushes the
+                     rest of the fixed-height layout around. -->
+                <div class="file-chip" id="file-chip" style="display:none;">
+                    <img class="file-chip-thumb" id="file-chip-thumb" alt="" style="display:none;" />
+                    <span class="file-chip-icon" id="file-chip-icon">📎</span>
+                    <span class="file-chip-name" id="file-chip-name"></span>
+                    <span class="file-chip-status" id="file-chip-status"></span>
+                    <button
+                        class="file-chip-remove"
+                        id="file-chip-remove"
+                        type="button"
+                        onclick="clearSelectedFile()"
+                        title="Remove file"
+                        aria-label="Remove file"
+                    >×</button>
+                </div>
+                <input
+                    type="text"
+                    id="chat-input"
+                    class="chat-input"
+                    placeholder="Type a command or ask anything..."
+                    onkeydown="handleKey(event)"
+                    autocomplete="off"
+                />
+            </div>
+            <!-- Shortcut mic button — calls the exact same toggleVoice()
+                 handler as the reactor's own voice button; not a second
+                 voice pipeline. -->
+            <button class="mic-shortcut-btn" type="button" onclick="toggleVoice()" title="Voice command" aria-label="Voice command">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="2" width="6" height="11" rx="3"/>
+                    <path d="M5 10a7 7 0 0 0 14 0"/>
+                    <line x1="12" y1="19" x2="12" y2="22"/>
+                    <line x1="8"  y1="22" x2="16" y2="22"/>
+                </svg>
+            </button>
+            <button class="send-btn" onclick="sendMessage()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="22" y1="2" x2="11" y2="13"/>
+                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                </svg>
+            </button>
+        </div>
+
+    </div>
+
+    <!-- RIGHT PANEL -->
+    <div class="panel panel-right">
+
+        <!-- Live Conversation -->
+        <div class="card card-grow" id="conversation-panel">
+            <div class="card-header">
+                <span class="card-title">LIVE CONVERSATION</span>
+                <span class="blink-dot"></span>
+            </div>
+            <div class="conversation-list" id="conversation-list"></div>
+        </div>
+
+        <!-- Quick Commands -->
+        <div class="card card-compact" id="quick-commands">
+            <div class="card-header">
+                <span class="card-title">QUICK COMMANDS</span>
+            </div>
+            <div class="quick-grid">
+                <button class="quick-btn" onclick="quickCmd('What is the weather in London?')">
+                    ⛅ WEATHER
+                </button>
+                <button class="quick-btn" onclick="quickCmd('Search the web for latest AI news')">
+                    🔍 SEARCH
+                </button>
+                <button class="quick-btn" onclick="quickCmd('What time is it?')">
+                    🕐 TIME
+                </button>
+                <button class="quick-btn" onclick="quickCmd('Tell me a joke, Jarvis')">
+                    😄 JOKE
+                </button>
+                <button class="quick-btn" onclick="quickCmd('What can you do?')">
+                    📋 HELP
+                </button>
+                <button class="quick-btn" onclick="clearConversation()">
+                    🗑 CLEAR
+                </button>
+            </div>
+        </div>
+
+        <!-- Waveform Visualiser -->
+        <div class="card card-compact" id="waveform-card">
+            <div class="card-header">
+                <span class="card-title">AUDIO WAVEFORM</span>
+                <span class="info-value" id="audio-status">IDLE</span>
+            </div>
+            <canvas id="waveform-canvas" height="40"></canvas>
+        </div>
+
+    </div>
+
+</div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
