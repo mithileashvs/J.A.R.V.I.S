@@ -307,30 +307,31 @@ C:\livekit\livekit-server.exe --dev
 
 ### 6. Start J.A.R.V.I.S.
 
-Start the backend:
+The backend serves the UI and the API on one port:
 
 ```powershell
 python main.py
 ```
 
-Start the frontend:
-
-```powershell
-cd frontend
-python -m http.server 3000
-```
-
 Open:
 
 ```text
-http://localhost:3000
+http://localhost:8000
 ```
 
-If configured, the project can also be started using:
+API health JSON (optional):
+
+```text
+http://localhost:8000/api
+```
+
+Or use the launcher (LiveKit + backend + browser):
 
 ```powershell
 .\startup.bat
 ```
+
+For frontend-only CSS previews you can still run `python -m http.server 3000` inside `frontend/` — `app.js` will call `http://localhost:8000` automatically.
 
 ---
 

@@ -1,6 +1,15 @@
 // ── CONFIG ─────────────────────────────────────────────
-const BACKEND_URL = "http://localhost:8000";
-const WS_URL      = "ws://localhost:8000/ws/conversation";
+// Same-origin when UI is served by FastAPI (port 8000).
+// Falls back to localhost:8000 for standalone static previews (:3000 / :5500 / file://).
+const BACKEND_URL = (() => {
+    const { protocol, origin, port } = window.location;
+    if (protocol === "http:" || protocol === "https:") {
+        if (port === "3000" || port === "5500") return "http://localhost:8000";
+        return origin;
+    }
+    return "http://localhost:8000";
+})();
+const WS_URL = BACKEND_URL.replace(/^http/, "ws") + "/ws/conversation";
 
 // ── STATE ──────────────────────────────────────────────
 let sessionId        = null;

@@ -15,10 +15,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import ollama
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend")
 
 from config import (
     BACKEND_PORT,
@@ -608,14 +611,15 @@ class TranscriptRequest(BaseModel):
 
 
 # ── REST Endpoints ─────────────────────────────────────────
-@app.get("/")
+@app.get("/api")
 async def root():
     return {
         "status":  "online",
         "name":    "J.A.R.V.I.S",
         "version": "2.1.0",
         "engine":  f"ollama/{TEXT_MODEL}" + (f" + {VISION_MODEL} (vision)" if VISION_MODEL else ""),
-        "message": "At your service, Sir. Fully local."
+        "message": "At your service, Sir. Fully local.",
+        "ui":      "/",
     }
 
 
@@ -2374,6 +2378,18 @@ async def websocket_conversation(websocket: WebSocket):
     except Exception as e:
         manager.disconnect(websocket)
         log_event("error", f"WebSocket error: {str(e)}")
+
+
+# ── Frontend (served by the same process as the API) ───────
+# Mounted last so every explicit API / WS route above wins.
+if os.path.isdir(FRONTEND_DIR):
+    app.mount(
+        "/",
+        StaticFiles(directory=FRONTEND_DIR, html=True),
+        name="frontend",
+    )
+else:
+    print(f"[JARVIS] WARNING: frontend directory not found at {FRONTEND_DIR}")
 
 
 # ── Entry Point ────────────────────────────────────────────

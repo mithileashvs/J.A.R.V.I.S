@@ -33,32 +33,25 @@ if %ERRORLEVEL% EQU 0 (
 timeout /t 3 /nobreak >nul
 
 REM ------------------------------------------
-REM Start JARVIS backend
+REM Start JARVIS (API + frontend on one port)
 REM ------------------------------------------
 
-echo Starting JARVIS backend...
+echo Starting JARVIS backend + UI on http://localhost:8000 ...
 start "JARVIS Backend" cmd /k "venv\Scripts\activate.bat && python main.py"
 
-timeout /t 3 /nobreak >nul
-
-REM ------------------------------------------
-REM Start JARVIS frontend
-REM ------------------------------------------
-
-echo Starting JARVIS frontend...
-start "JARVIS Frontend" cmd /k "cd frontend && python -m http.server 3000"
-
-timeout /t 2 /nobreak >nul
+timeout /t 4 /nobreak >nul
 
 REM ------------------------------------------
 REM Open browser
 REM ------------------------------------------
 
-start "" "http://localhost:3000"
+start "" "http://localhost:8000"
 
 echo.
 echo ==========================================
 echo        JARVIS STARTUP COMPLETE
 echo ==========================================
+echo UI + API: http://localhost:8000
+echo API JSON: http://localhost:8000/api
 echo.
 exit
