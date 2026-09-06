@@ -2212,8 +2212,6 @@ async def voice_state(request: AgentStateRequest):
     })
     return {"status": "ok"}
 
-    return {"status": "ok"}
-
 
 @app.post("/agent/restart")
 async def restart_agent():

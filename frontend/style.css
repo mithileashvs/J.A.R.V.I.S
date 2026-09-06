@@ -882,6 +882,15 @@ html, body {
     pointer-events: auto;
     filter: none;
 }
+/* Keep reactor fully visible during live voice even if another scene
+   (e.g. RESPONSE) briefly wins — otherwise thinking/speaking looks stuck. */
+body.core-listening .idle-field,
+body.core-thinking .idle-field,
+body.core-speaking .idle-field {
+    opacity: 1 !important;
+    pointer-events: auto !important;
+    filter: none !important;
+}
 
 .scene-content {
     position: absolute;
