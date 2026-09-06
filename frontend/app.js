@@ -2411,19 +2411,29 @@ async function activateVoice() {
         const res  = await fetch(`${BACKEND_URL}/livekit/token?room=jarvis-room&identity=user-${Date.now()}`);
         const data = await res.json();
         if (!data.token) throw new Error("No token received");
+        if (data.agent_dispatched === false) {
+            addLogEntry(
+                "Agent dispatch failed — voice may not hear you. Check that the agent process is running.",
+                "error"
+            );
+            if (data.dispatch_error) {
+                console.warn("[VOICE] Dispatch error:", data.dispatch_error);
+            }
+        }
 
         await loadLiveKitSDK();
 
         const { Room, RoomEvent } = window.LivekitClient;
 
-        // ── FIX 1 + FIX 4: Room with echo cancellation ────────
+        // Do NOT force sampleRate: 16000 — many Windows devices reject
+        // that constraint and end up with a muted/broken mic track while
+        // the UI still shows LISTENING.
         livekitRoom = new Room({
             audioCaptureDefaults: {
                 echoCancellation:   true,
                 noiseSuppression:   true,
                 autoGainControl:    true,
                 channelCount:       1,
-                sampleRate:         16000,
             },
             adaptiveStream: true,
             dynacast:       true,
@@ -2431,17 +2441,8 @@ async function activateVoice() {
 
         livekitRoom.on(RoomEvent.TrackSubscribed, (track, pub, participant) => {
             if (track.kind === "audio") {
-                // ── FIX 4: Only attach remote agent audio ──────
+                // Only attach remote agent audio
                 if (participant.isAgent || !participant.isLocal) {
-                    // NOTE: attach()'s return value (the <audio> element)
-                    // was previously discarded — it was never appended to
-                    // the DOM and never tagged "jarvis-audio", so
-                    // deactivateVoice()'s
-                    // `document.querySelectorAll(".jarvis-audio").forEach(el => el.remove())`
-                    // could never find or clean it up, leaving orphaned
-                    // <audio> elements (and their MediaStream) behind
-                    // across voice sessions. Tag + append it so cleanup
-                    // actually works.
                     const el = track.attach();
                     el.classList.add("jarvis-audio");
                     el.style.display = "none";
@@ -2449,27 +2450,6 @@ async function activateVoice() {
                     addLogEntry("JARVIS voice connected.", "success");
                     playChime("connect");
 
-                    // ── FIX 4 (corrected): this track is ONE continuous
-                    // connection-lifetime stream, not a fresh track per
-                    // reply — so `playing`/`pause`/`ended` only fire
-                    // once, at connect time, and never again per-turn.
-                    // That's the actual reason "JARVIS SPEAKING" looked
-                    // disconnected from any real reply: it was firing
-                    // once when the (mostly silent) track first
-                    // attached, not per-utterance.
-                    //
-                    // The real per-turn "speaking" signal now comes from
-                    // agent.py's agent_state_changed event via the
-                    // "voice_state" WebSocket message (see
-                    // handleWsMessage) — that's the framework's own
-                    // accurate, turn-scoped notion of when TTS is
-                    // actually being generated/played for a specific
-                    // reply. This local element is now only a safety net
-                    // for genuine playback failures (autoplay blocked,
-                    // decode error) — if the browser truly can't play
-                    // the audio, force back to LISTENING even if the
-                    // server-side state still says "speaking", so the UI
-                    // never gets stuck lying about it.
                     el.addEventListener("error", () => {
                         if (voiceActive) setVoiceState("LISTENING");
                         const err = el.error;
@@ -2480,11 +2460,6 @@ async function activateVoice() {
                         );
                     });
 
-                    // Some browsers reject the implicit autoplay attach()
-                    // triggers internally. Retry play(), but do NOT force
-                    // LISTENING on failure — that raced with real
-                    // voice_state transitions and pinned the UI on
-                    // LISTENING after connect.
                     el.play().catch((err) => {
                         console.error("[PLAYER] ERROR: autoplay blocked or playback failed:", err);
                         addLogEntry(
@@ -2509,13 +2484,6 @@ async function activateVoice() {
             deactivateVoice();
         });
 
-        // NOTE: ActiveSpeakersChanged deliberately no longer drives
-        // setVoiceState — see the <audio> `playing`/`pause`/`ended`/
-        // `error` listeners registered in TrackSubscribed above, which
-        // are the accurate source of truth for whether JARVIS is
-        // audibly speaking in THIS browser tab. Keeping this listener
-        // only for the waveform's realtime color cue is fine since
-        // that's cosmetic, not a state claim.
         livekitRoom.on(RoomEvent.ActiveSpeakersChanged, (speakers) => {
             const agentSpeaking = speakers.some(s => !s.isLocal);
             if (agentSpeaking) {
@@ -2527,42 +2495,38 @@ async function activateVoice() {
 
         await livekitRoom.connect(data.url, data.token);
 
-        // ── FIX 1: Enable mic with echo cancellation ──────────
         await livekitRoom.localParticipant.setMicrophoneEnabled(true, {
             echoCancellation: true,
             noiseSuppression: true,
             autoGainControl:  true,
         });
 
-        // ── DIAGNOSTIC: log which physical device was actually
-        // selected as the input. If this prints "Stereo Mix",
-        // "What U Hear", "Wave Out Mix", or anything with
-        // "loopback"/"monitor" in the name, that is a Windows-level
-        // setting routing your speaker output back into your mic —
-        // JARVIS's code cannot fix that; open Windows Sound Settings
-        // → Recording tab → disable/unset that device as default.
+        // Confirm the published mic is live — muted/ended tracks mean
+        // the agent will never receive speech.
         try {
             const micPub = livekitRoom.localParticipant.audioTrackPublications
                 .values().next().value;
-            const track = micPub && micPub.track;
-            const settings = track && track.mediaStreamTrack &&
-                track.mediaStreamTrack.getSettings();
-            const deviceLabel = track && track.mediaStreamTrack &&
-                track.mediaStreamTrack.label;
-            console.log("[VOICE] Input device:", deviceLabel || "(unknown)");
-            addLogEntry(`Input device: ${deviceLabel || "unknown"}`, "info");
-            if (deviceLabel && /stereo mix|what u hear|wave out|loopback|monitor of/i.test(deviceLabel)) {
+            const mst = micPub && micPub.track && micPub.track.mediaStreamTrack;
+            const deviceLabel = (mst && mst.label) || "(unknown)";
+            console.log("[VOICE] Input device:", deviceLabel, "enabled=", mst && mst.enabled, "readyState=", mst && mst.readyState);
+            addLogEntry(`Input device: ${deviceLabel}`, "info");
+            if (!mst || mst.readyState === "ended" || mst.enabled === false) {
+                throw new Error("Microphone track is muted or ended — check browser mic permission.");
+            }
+            if (/stereo mix|what u hear|wave out|loopback|monitor of/i.test(deviceLabel)) {
                 addLogEntry(
                     "WARNING: selected input looks like a loopback/monitor device — this will echo your speaker output back to JARVIS.",
                     "error"
                 );
             }
         } catch (e) {
+            if (e && e.message && e.message.includes("Microphone track")) throw e;
             console.warn("[JARVIS] Could not read input device label:", e);
         }
 
-        // ── FIX 1: Use LiveKit's audio track for waveform ─────
-        // Only get ONE stream — reuse the LiveKit mic, don't open a second one
+        // Waveform must reuse LiveKit's published track. Opening a second
+        // getUserMedia() on Windows often steals the mic from LiveKit, so
+        // the UI "listens" while the agent receives silence.
         try {
             const tracks = livekitRoom.localParticipant.audioTrackPublications;
             for (const [, pub] of tracks) {
@@ -2570,21 +2534,32 @@ async function activateVoice() {
                     micStream = pub.track.mediaStream;
                     break;
                 }
-            }
-            if (!micStream) {
-                micStream = await navigator.mediaDevices.getUserMedia({
-                    audio: {
-                        echoCancellation: true,
-                        noiseSuppression: true,
-                        autoGainControl:  true,
-                    }
-                });
+                if (pub.track && pub.track.mediaStreamTrack) {
+                    micStream = new MediaStream([pub.track.mediaStreamTrack]);
+                    break;
+                }
             }
         } catch (e) {
             console.warn("[JARVIS] Could not get mic stream for visualiser:", e);
         }
 
         if (micStream) startAudioVisualiser(micStream);
+
+        // Wait for the agent worker to actually join — otherwise we sit
+        // on LISTENING forever with nobody subscribed to the mic.
+        const agentReady = await waitForVoiceAgent(livekitRoom, 20000);
+        if (!agentReady) {
+            addLogEntry(
+                "Voice agent did not join the room. Restart the backend (agent process) and try again.",
+                "error"
+            );
+            updateResponsePanel(
+                "Voice agent is not in the room, Sir. I can hear nothing until it joins — restart JARVIS and try voice again."
+            );
+            await deactivateVoice();
+            return;
+        }
+        addLogEntry("Voice agent joined the room.", "success");
 
         voiceActive = true;
 
@@ -2595,7 +2570,6 @@ async function activateVoice() {
 
         document.getElementById("audio-status").textContent = "ACTIVE";
         addLogEntry("Voice assistant activated.", "success");
-        // Update response text without forcing RESPONSE scene over VOICE.
         const resp = document.getElementById("response-text");
         if (resp) {
             clearTypewriter();
@@ -2607,7 +2581,45 @@ async function activateVoice() {
         addLogEntry("Voice activation failed: " + e.message, "error");
         updateResponsePanel("Voice system unavailable. Using text interface, Sir.");
         voiceActive = false;
+        try { await deactivateVoice(); } catch (_) {}
     }
+}
+
+function roomHasVoiceAgent(room) {
+    if (!room) return false;
+    for (const p of room.remoteParticipants.values()) {
+        if (p.isAgent) return true;
+        const id = (p.identity || "").toLowerCase();
+        const name = (p.name || "").toLowerCase();
+        if (id.includes("agent") || id.includes("jarvis") || name.includes("jarvis")) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function waitForVoiceAgent(room, timeoutMs) {
+    if (roomHasVoiceAgent(room)) return Promise.resolve(true);
+    const { RoomEvent } = window.LivekitClient;
+    return new Promise((resolve) => {
+        let settled = false;
+        const finish = (ok) => {
+            if (settled) return;
+            settled = true;
+            try { room.off(RoomEvent.ParticipantConnected, onJoin); } catch (_) {}
+            clearTimeout(timer);
+            resolve(ok);
+        };
+        const onJoin = () => {
+            if (roomHasVoiceAgent(room)) finish(true);
+        };
+        const timer = setTimeout(() => finish(false), timeoutMs);
+        room.on(RoomEvent.ParticipantConnected, onJoin);
+        // Agent may already be mid-join
+        setTimeout(() => {
+            if (roomHasVoiceAgent(room)) finish(true);
+        }, 250);
+    });
 }
 
 async function deactivateVoice() {
@@ -2624,10 +2636,11 @@ async function deactivateVoice() {
         livekitRoom = null;
     }
 
-    if (micStream) {
-        micStream.getTracks().forEach(t => t.stop());
-        micStream = null;
-    }
+    // Do not stop() tracks on micStream — it usually wraps LiveKit's
+    // published MediaStreamTrack, which disconnect() already releases.
+    // Stopping here caused Windows devices to leave the mic in a bad
+    // state for the next activateVoice() call.
+    micStream = null;
 
     if (audioContext) {
         try { await audioContext.close(); } catch (e) {}

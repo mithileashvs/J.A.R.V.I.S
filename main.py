@@ -2245,6 +2245,17 @@ async def start_agent_endpoint():
 
 
 # ── LiveKit Token Endpoint ─────────────────────────────────
+def _livekit_http_url(ws_url: str) -> str:
+    """LiveKitAPI talks HTTP; .env usually stores the browser WebSocket URL."""
+    if not ws_url:
+        return ws_url
+    if ws_url.startswith("wss://"):
+        return "https://" + ws_url[len("wss://"):]
+    if ws_url.startswith("ws://"):
+        return "http://" + ws_url[len("ws://"):]
+    return ws_url
+
+
 @app.get("/livekit/token")
 async def get_livekit_token(
     room:     str = "jarvis-room",
@@ -2254,7 +2265,9 @@ async def get_livekit_token(
         from livekit.api import AccessToken, VideoGrants, LiveKitAPI
         from livekit.protocol.agent_dispatch import CreateAgentDispatchRequest
 
-        # Generate user token
+        # Generate user token — must explicitly allow publish or the
+        # browser can join the room while the mic track never reaches
+        # the agent (UI stuck on LISTENING, "audio not got by it").
         token = (
             AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET)
             .with_identity(identity)
@@ -2262,36 +2275,61 @@ async def get_livekit_token(
             .with_grants(VideoGrants(
                 room_join=True,
                 room=room,
+                can_publish=True,
+                can_subscribe=True,
+                can_publish_data=True,
             ))
         )
         jwt = token.to_jwt()
 
-        # Dispatch agent to room automatically
+        # Match agent.py: local LiveKit uses an unnamed auto-accept
+        # worker; Cloud / non-local uses named "Jarvis" + explicit dispatch.
+        lk_url_l = (LIVEKIT_URL or "").lower()
+        is_local = "localhost" in lk_url_l or "127.0.0.1" in lk_url_l
+        agent_name = os.getenv("JARVIS_AGENT_NAME")
+        if agent_name is None:
+            agent_name = "" if is_local else "Jarvis"
+        agent_name = agent_name.strip()
+
+        agent_dispatched = False
+        dispatch_error = None
         try:
             lkapi = LiveKitAPI(
-                url=LIVEKIT_URL,
+                url=_livekit_http_url(LIVEKIT_URL),
                 api_key=LIVEKIT_API_KEY,
                 api_secret=LIVEKIT_API_SECRET,
             )
 
             dispatch_req = CreateAgentDispatchRequest()
             dispatch_req.room = room
-            dispatch_req.agent_name = "Jarvis"
+            # Named workers only accept matching dispatches; unnamed
+            # local workers accept a dispatch with no agent_name set.
+            if agent_name:
+                dispatch_req.agent_name = agent_name
 
             await lkapi.agent_dispatch.create_dispatch(dispatch_req)
+            agent_dispatched = True
 
-            print(f"[JARVIS] Agent dispatched to room: {room}")
+            print(
+                f"[JARVIS] Agent dispatched to room: {room}"
+                + (f" (name={agent_name})" if agent_name else " (auto/unnamed worker)")
+            )
             log_event("agent_dispatch", f"Agent dispatched to room {room}")
             await lkapi.aclose()
 
         except Exception as dispatch_err:
+            dispatch_error = str(dispatch_err)
+            # On local auto mode, a failed dispatch is still fatal for
+            # self-hosted LiveKit — surface it clearly.
             print(f"[JARVIS] Dispatch warning: {dispatch_err}")
 
         return {
-            "token":    jwt,
-            "url":      LIVEKIT_URL,
-            "room":     room,
-            "identity": identity,
+            "token":            jwt,
+            "url":              LIVEKIT_URL,
+            "room":             room,
+            "identity":         identity,
+            "agent_dispatched": agent_dispatched,
+            "dispatch_error":   dispatch_error,
         }
 
     except Exception as e:
