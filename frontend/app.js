@@ -176,6 +176,887 @@ function playChime(kind) {
     }
 }
 
+// ── SCENE CONTROLLER ───────────────────────────────────
+// Constructs / dissolves holographic scenes. Never hard-cuts panels.
+const SceneController = {
+    current: "IDLE",
+    phase: "idle", // idle | constructing | settled | dissolving
+    _timer: null,
+    _queue: null,
+    CONSTRUCT_MS: 520,
+    DISSOLVE_MS: 380,
+
+    stage() { return document.getElementById("scene-stage"); },
+    body() { return document.body; },
+    label() { return document.getElementById("scene-label"); },
+
+    _setBodyScene(name) {
+        const b = this.body();
+        if (!b) return;
+        b.classList.remove(
+            "scene-idle", "scene-active", "scene-constructing", "scene-dissolving", "scene-decision"
+        );
+        if (name === "IDLE") b.classList.add("scene-idle");
+        else {
+            b.classList.add("scene-active");
+            if (this.phase === "constructing") b.classList.add("scene-constructing");
+            if (this.phase === "dissolving") b.classList.add("scene-dissolving");
+            if (name === "DECISION") b.classList.add("scene-decision");
+        }
+    },
+
+    _setStagePhase(phase) {
+        const stage = this.stage();
+        if (!stage) return;
+        stage.classList.remove("is-idle", "is-constructing", "is-settled", "is-dissolving");
+        if (phase === "idle") stage.classList.add("is-idle");
+        else if (phase === "constructing") stage.classList.add("is-constructing");
+        else if (phase === "settled") stage.classList.add("is-settled");
+        else if (phase === "dissolving") stage.classList.add("is-dissolving");
+        this.phase = phase;
+    },
+
+    _hideAllLayers() {
+        document.querySelectorAll(".scene-layer").forEach((el) => {
+            el.hidden = true;
+        });
+    },
+
+    _showLayer(scene) {
+        this._hideAllLayers();
+        const layer = document.querySelector(`.scene-layer[data-scene="${scene}"]`);
+        if (layer) layer.hidden = false;
+    },
+
+    _updateLabel(scene) {
+        const el = this.label();
+        if (el) el.textContent = scene;
+    },
+
+    enter(scene, payload) {
+        if (!scene) return;
+        if (scene === this.current && this.phase === "settled") {
+            this.update(scene, payload);
+            return;
+        }
+        if (this.phase === "constructing" || this.phase === "dissolving") {
+            this._queue = { scene, payload };
+            return;
+        }
+        if (this.current !== "IDLE" && scene !== this.current) {
+            this._dissolveThen(() => this._construct(scene, payload));
+            return;
+        }
+        if (scene === "IDLE") {
+            this.dissolveToIdle();
+            return;
+        }
+        this._construct(scene, payload);
+    },
+
+    update(scene, payload) {
+        if (scene !== this.current) {
+            this.enter(scene, payload);
+            return;
+        }
+        this._applyPayload(scene, payload);
+    },
+
+    dissolveToIdle() {
+        if (this.current === "IDLE" && this.phase === "idle") return;
+        this._dissolveThen(() => {
+            this.current = "IDLE";
+            this._hideAllLayers();
+            this._setStagePhase("idle");
+            this._setBodyScene("IDLE");
+            this._updateLabel("IDLE");
+            this._flushQueue();
+        });
+    },
+
+    _construct(scene, payload) {
+        clearTimeout(this._timer);
+        this.current = scene;
+        this._showLayer(scene);
+        this._applyPayload(scene, payload);
+        this._setStagePhase("constructing");
+        this._setBodyScene(scene);
+        this._updateLabel(scene);
+        if (typeof AnimationSystem !== "undefined") {
+            AnimationSystem.onSceneConstruct(scene);
+            if (scene === "DECISION") AnimationSystem.enterDecisionFocus();
+        }
+        if (typeof CinematicSystem !== "undefined") {
+            CinematicSystem.onScene(scene);
+        }
+        this._timer = setTimeout(() => {
+            this._setStagePhase("settled");
+            this._setBodyScene(scene);
+            this._flushQueue();
+        }, this.CONSTRUCT_MS);
+    },
+
+    _dissolveThen(next) {
+        clearTimeout(this._timer);
+        if (this.current === "IDLE" || this.phase === "idle") {
+            next();
+            return;
+        }
+        this._setStagePhase("dissolving");
+        this._setBodyScene(this.current);
+        if (typeof AnimationSystem !== "undefined") {
+            AnimationSystem.onSceneDissolve(this.current);
+        }
+        if (typeof CinematicSystem !== "undefined") {
+            CinematicSystem.onSceneDissolve();
+        }
+        this._timer = setTimeout(() => {
+            if (typeof AnimationSystem !== "undefined") AnimationSystem.exitDecisionFocus();
+            if (typeof CinematicSystem !== "undefined") CinematicSystem.onScene("IDLE");
+            next();
+        }, this.DISSOLVE_MS);
+    },
+
+    _flushQueue() {
+        if (!this._queue) return;
+        const next = this._queue;
+        this._queue = null;
+        this.enter(next.scene, next.payload);
+    },
+
+    _applyPayload(scene, payload) {
+        if (!payload) return;
+        if (scene === "VOICE") {
+            const cap = document.getElementById("voice-scene-caption");
+            if (cap && payload.state) cap.textContent = payload.state;
+        }
+        if (scene === "FILES") {
+            const name = document.getElementById("scene-files-name");
+            const status = document.getElementById("scene-files-status");
+            const thumb = document.getElementById("scene-files-thumb");
+            if (name && payload.name) name.textContent = payload.name;
+            if (status && payload.status) status.textContent = payload.status;
+            if (thumb) {
+                if (payload.preview) {
+                    thumb.src = payload.preview;
+                    thumb.hidden = false;
+                } else if (payload.clearThumb) {
+                    thumb.hidden = true;
+                    thumb.src = "";
+                }
+            }
+            if (typeof AnimationSystem !== "undefined") {
+                AnimationSystem.setFileScanState(payload.status || "");
+            }
+            if (typeof CinematicSystem !== "undefined" && payload.status) {
+                const s = String(payload.status).toLowerCase();
+                if (/fail|error/.test(s)) CinematicSystem.setFileResult(false);
+                else if (/done|complete|success|ready|analys/.test(s) && !/standby|upload|pending|scan/.test(s)) {
+                    CinematicSystem.setFileResult(true);
+                }
+            }
+        }
+        if (scene === "SYSTEM_ACTION") {
+            const steps = document.getElementById("scene-system-steps");
+            if (steps && payload.detail) {
+                steps.innerHTML = `<div class="system-step-label">${_escapeHtml(payload.detail)}</div>`;
+            }
+            if (typeof AnimationSystem !== "undefined") {
+                AnimationSystem.advanceSystemPipeline(payload.detail || "");
+            }
+            if (typeof CinematicSystem !== "undefined" && payload.detail) {
+                const t = String(payload.detail).toUpperCase();
+                if (/INIT/.test(t)) CinematicSystem.advanceExec(0);
+                else if (/EXEC|RUN|START/.test(t)) CinematicSystem.advanceExec(1);
+                else if (/VERIFY|CHECK|VALID/.test(t)) CinematicSystem.advanceExec(2);
+                else if (/COMPLETE|DONE|SUCCESS|FINISH/.test(t)) CinematicSystem.setExecComplete();
+                else if (/FAIL|ERROR/.test(t)) {
+                    const g = CinematicSystem.el("cin-exec-graph");
+                    if (g) g.classList.add("failed");
+                    CinematicSystem.playError();
+                }
+            }
+        }
+        if (scene === "DECISION") {
+            const body = document.getElementById("scene-decision-body");
+            if (body && payload.reason) body.textContent = payload.reason;
+        }
+    },
+};
+
+// ── ANIMATION SYSTEM (spritesheet language) ────────────
+const AnimationSystem = {
+    reduced: typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches,
+    _activateLock: false,
+    particleMode: "idle", // idle | voice | thinking | speaking | action | error
+
+    setCoreState(state) {
+        const wrap = document.getElementById("hud-wrapper");
+        if (!wrap) return;
+        const map = {
+            READY: "ready",
+            LISTENING: "listening",
+            THINKING: "thinking",
+            SPEAKING: "speaking",
+            ERROR: "error",
+            EXECUTING: "executing",
+            VERIFYING: "verifying",
+            ACTIVATING: "activating",
+        };
+        const key = map[state] || "ready";
+        wrap.className = wrap.className
+            .split(/\s+/)
+            .filter((c) => c && !c.startsWith("core-state-"))
+            .concat([`core-state-${key}`])
+            .join(" ");
+        wrap.dataset.coreState = state;
+        document.body.classList.remove(
+            "core-thinking", "core-speaking", "core-listening", "core-error"
+        );
+        if (key === "thinking") document.body.classList.add("core-thinking");
+        if (key === "speaking") document.body.classList.add("core-speaking");
+        if (key === "listening") document.body.classList.add("core-listening");
+        if (key === "error") document.body.classList.add("core-error");
+
+        this.particleMode =
+            key === "thinking" ? "thinking" :
+            key === "speaking" ? "speaking" :
+            key === "listening" || key === "activating" ? "voice" :
+            key === "error" ? "error" :
+            key === "executing" || key === "verifying" ? "action" : "idle";
+    },
+
+    async playActivationSequence() {
+        if (this.reduced) return;
+        if (this._activateLock) return;
+        this._activateLock = true;
+        this.setCoreState("ACTIVATING");
+        this.burst();
+        this.travelLight("core", "core", "outward");
+        await new Promise((r) => setTimeout(r, 720));
+        this._activateLock = false;
+    },
+
+    onSceneConstruct(scene) {
+        if (this.reduced) return;
+        const from = "core";
+        const to =
+            scene === "RESPONSE" ? "response" :
+            scene === "FILES" ? "files" :
+            scene === "SYSTEM_ACTION" ? "system" :
+            scene === "DECISION" ? "decision" : "core";
+        this.travelLight(from, to, "outward");
+        if (scene === "SYSTEM_ACTION") {
+            this.resetSystemPipeline();
+            this.advanceSystemPipeline("INITIALIZE");
+            this.particleMode = "action";
+            this.setCoreState("EXECUTING");
+        }
+        if (scene === "FILES") this.setFileScanState("scanning");
+    },
+
+    onSceneDissolve(scene) {
+        if (this.reduced) return;
+        this.travelLight(
+            scene === "RESPONSE" ? "response" :
+            scene === "FILES" ? "files" :
+            scene === "SYSTEM_ACTION" ? "system" :
+            scene === "DECISION" ? "decision" : "core",
+            "core",
+            "inward"
+        );
+        this.exitDecisionFocus();
+        this.particleMode = "idle";
+    },
+
+    enterDecisionFocus() {
+        document.body.classList.add("decision-focus", "scene-decision");
+    },
+    exitDecisionFocus() {
+        document.body.classList.remove("decision-focus", "scene-decision");
+    },
+
+    _anchor(name) {
+        const map = {
+            core: document.getElementById("hud-wrapper") || document.getElementById("voice-btn"),
+            response: document.getElementById("response-panel") || document.getElementById("scene-response"),
+            files: document.getElementById("files-scan-frame") || document.getElementById("scene-files"),
+            system: document.getElementById("scene-system-steps") || document.getElementById("scene-system"),
+            decision: document.getElementById("scene-decision-body") || document.getElementById("scene-decision"),
+            conversation: document.getElementById("conversation-panel"),
+        };
+        return map[name] || map.core;
+    },
+
+    travelLight(fromName, toName) {
+        if (this.reduced) return;
+        const svg = document.getElementById("light-trail");
+        const path = document.getElementById("light-trail-path");
+        const bead = document.getElementById("light-trail-bead");
+        if (!svg || !path || !bead) return;
+
+        const fromEl = this._anchor(fromName);
+        const toEl = this._anchor(toName);
+        if (!fromEl || !toEl) return;
+
+        const vw = window.innerWidth || 1;
+        const vh = window.innerHeight || 1;
+        const a = fromEl.getBoundingClientRect();
+        const b = toEl.getBoundingClientRect();
+        const x1 = ((a.left + a.width / 2) / vw) * 100;
+        const y1 = ((a.top + a.height / 2) / vh) * 100;
+        const x2 = ((b.left + b.width / 2) / vw) * 100;
+        const y2 = ((b.top + b.height / 2) / vh) * 100;
+        const mx = (x1 + x2) / 2;
+        const my = (y1 + y2) / 2 - 6;
+
+        path.setAttribute("d", `M${x1} ${y1} Q${mx} ${my} ${x2} ${y2}`);
+        const len = path.getTotalLength ? path.getTotalLength() : 100;
+        path.style.strokeDasharray = String(len);
+        path.style.strokeDashoffset = String(len);
+
+        svg.classList.add("active", "traveling");
+        path.style.transition = "none";
+        path.getBoundingClientRect();
+        path.style.transition = "stroke-dashoffset 880ms cubic-bezier(0.22, 1, 0.36, 1)";
+        path.style.strokeDashoffset = "0";
+
+        const start = performance.now();
+        const dur = 880;
+        const step = (now) => {
+            const t = Math.min(1, (now - start) / dur);
+            // smoother ease-out cubic
+            const ease = 1 - Math.pow(1 - t, 3);
+            try {
+                const pt = path.getPointAtLength(ease * len);
+                bead.setAttribute("cx", pt.x);
+                bead.setAttribute("cy", pt.y);
+            } catch (_) {}
+            if (t < 1) requestAnimationFrame(step);
+            else {
+                svg.classList.remove("traveling");
+                setTimeout(() => svg.classList.remove("active"), 280);
+                if (toName === "conversation" || toName === "response") {
+                    const panel = document.getElementById("conversation-panel");
+                    if (panel) {
+                        panel.classList.add("energy-hit");
+                        setTimeout(() => panel.classList.remove("energy-hit"), 500);
+                    }
+                }
+            }
+        };
+        requestAnimationFrame(step);
+    },
+
+    burst() {
+        if (this.reduced) return;
+        const fx = document.getElementById("fx-overlay");
+        if (!fx) return;
+        fx.classList.remove("burst", "success", "error");
+        void fx.offsetWidth;
+        fx.classList.add("burst");
+        const core = document.getElementById("hud-wrapper") || document.getElementById("voice-btn");
+        if (core && typeof window.__jarvisParticleBurst === "function") {
+            const r = core.getBoundingClientRect();
+            window.__jarvisParticleBurst(r.left + r.width / 2, r.top + r.height / 2, "255,176,0");
+        }
+        setTimeout(() => fx.classList.remove("burst"), 750);
+    },
+
+    success() {
+        if (this.reduced) return;
+        const fx = document.getElementById("fx-overlay");
+        if (!fx) return;
+        fx.classList.remove("burst", "success", "error");
+        void fx.offsetWidth;
+        fx.classList.add("success");
+        setTimeout(() => fx.classList.remove("success"), 850);
+    },
+
+    error() {
+        if (this.reduced) return;
+        const fx = document.getElementById("fx-overlay");
+        if (!fx) return;
+        fx.classList.remove("burst", "success", "error");
+        void fx.offsetWidth;
+        fx.classList.add("error");
+        document.body.classList.add("fx-error-ambient");
+        setTimeout(() => {
+            fx.classList.remove("error");
+            document.body.classList.remove("fx-error-ambient");
+        }, 900);
+    },
+
+    setFileScanState(status) {
+        const frame = document.getElementById("files-scan-frame");
+        if (!frame) return;
+        const s = String(status || "").toLowerCase();
+        frame.classList.remove("scanning", "success", "error");
+        if (/fail|error/.test(s)) {
+            frame.classList.add("error");
+            this.error();
+        } else if (/done|complete|success|ready|analys/.test(s) && !/standby|upload|pending|scan/.test(s)) {
+            frame.classList.add("success");
+            this.success();
+        } else if (s && s !== "standby") {
+            frame.classList.add("scanning");
+        }
+    },
+
+    resetSystemPipeline() {
+        const pipe = document.getElementById("system-pipeline");
+        if (!pipe) return;
+        pipe.classList.add("running");
+        pipe.querySelectorAll(".sys-step").forEach((el) => {
+            el.classList.remove("active", "done", "fail");
+        });
+    },
+
+    advanceSystemPipeline(detail) {
+        const pipe = document.getElementById("system-pipeline");
+        if (!pipe) return;
+        const text = String(detail || "").toUpperCase();
+        const steps = [...pipe.querySelectorAll(".sys-step")];
+        let idx = 0;
+        if (/EXEC|RUN|START/.test(text)) idx = 1;
+        if (/VERIF|CHECK/.test(text)) idx = 2;
+        if (/COMPLETE|DONE|SUCCESS|FINISH/.test(text)) idx = 3;
+        if (/FAIL|ERROR/.test(text)) {
+            steps.forEach((el, i) => {
+                el.classList.toggle("done", i < 1);
+                el.classList.toggle("fail", i === 1);
+                el.classList.remove("active");
+            });
+            this.error();
+            return;
+        }
+        steps.forEach((el, i) => {
+            el.classList.toggle("done", i < idx);
+            el.classList.toggle("active", i === idx);
+            el.classList.remove("fail");
+        });
+        if (idx === 3) {
+            this.success();
+            pipe.classList.remove("running");
+        } else {
+            pipe.classList.add("running");
+        }
+    },
+
+    onSpeakingEnergy() {
+        // Keep speaking energy on the reactor — no outward throw to panels
+    },
+};
+
+// ── CINEMATIC HERO SYSTEM (large contextual FX) ────────
+const CinematicSystem = {
+    reduced: typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches,
+    _bootDone: false,
+    _neuralTimer: null,
+    _heroMode: false,
+    _execStep: 0,
+
+    el(id) { return document.getElementById(id); },
+
+    _setEnv(mode) {
+        document.body.classList.remove(
+            "env-light-listen", "env-light-think", "env-light-exec",
+            "env-light-success", "env-light-error"
+        );
+        if (mode) document.body.classList.add(`env-light-${mode}`);
+    },
+
+    _setHero(on) {
+        this._heroMode = !!on;
+        document.body.classList.toggle("cin-hero-active", !!on);
+        document.body.classList.toggle("cin-dim-ui", !!on);
+    },
+
+    _show(id, ms) {
+        const node = this.el(id);
+        if (!node) return;
+        node.classList.add("active");
+        if (ms) {
+            clearTimeout(node._cinHide);
+            node._cinHide = setTimeout(() => node.classList.remove("active"), ms);
+        }
+    },
+
+    _hide(id) {
+        const node = this.el(id);
+        if (node) node.classList.remove("active", "success", "error", "complete", "failed", "leaving", "collapsing");
+    },
+
+    _hideAllHero() {
+        [
+            "cin-hero-ring", "cin-neural-field", "cin-energy-flow", "cin-data-wall",
+            "cin-data-rain", "cin-speak-field", "cin-voice-activate",
+            "cin-scan-field", "cin-exec-graph", "cin-decision-field",
+            "cin-success-burst", "cin-error-collapse", "cin-dissolve"
+        ].forEach((id) => this._hide(id));
+        this._setHero(false);
+        document.body.classList.remove("cin-voice-activate");
+    },
+
+    async playBoot() {
+        if (this._bootDone) return;
+        this._bootDone = true;
+        if (this.reduced) return;
+        const boot = this.el("cin-boot");
+        if (!boot) return;
+        document.body.classList.add("cin-booting");
+        boot.classList.add("active");
+        boot.style.display = "";
+        await new Promise((r) => setTimeout(r, 1600));
+        boot.classList.add("leaving");
+        await new Promise((r) => setTimeout(r, 350));
+        boot.classList.remove("active", "leaving");
+        document.body.classList.remove("cin-booting");
+        this._show("cin-ambient");
+        if (typeof playChime === "function") playChime("connect");
+    },
+
+    onVoiceActivate() {
+        if (this.reduced) return;
+        this._setHero(true);
+        this._setEnv("listen");
+        this._show("cin-hero-ring");
+        this._show("cin-voice-activate", 1600);
+        this._show("cin-energy-flow", 2000);
+        this._show("cin-data-rain", 2200);
+        setTimeout(() => {
+            if (!document.body.classList.contains("core-listening") &&
+                !document.body.classList.contains("core-thinking") &&
+                !document.body.classList.contains("core-speaking")) {
+                // keep hero if still in voice scene
+            }
+        }, 1800);
+    },
+
+    onVoiceState(state) {
+        if (this.reduced) return;
+        const s = state;
+        if (s === "LISTENING") {
+            this._setHero(true);
+            this._setEnv("listen");
+            this._show("cin-hero-ring");
+            this._show("cin-energy-flow");
+            this._show("cin-data-rain");
+            this._hide("cin-neural-field");
+            this._hide("cin-speak-field");
+            this._hide("cin-data-wall");
+        } else if (s === "THINKING") {
+            this._setHero(true);
+            this._setEnv("think");
+            this._show("cin-hero-ring");
+            this._show("cin-data-wall");
+            this._show("cin-data-rain");
+            this._hide("cin-energy-flow");
+            this._hide("cin-speak-field");
+            this.buildNeuralField();
+            this._show("cin-neural-field");
+        } else if (s === "SPEAKING") {
+            this._setHero(true);
+            this._setEnv("listen");
+            this._hide("cin-neural-field");
+            this._hide("cin-energy-flow");
+            this._show("cin-hero-ring");
+            this._show("cin-speak-field");
+            this._show("cin-data-wall");
+            this._show("cin-data-rain");
+            if (typeof AnimationSystem !== "undefined") {
+                AnimationSystem.onSpeakingEnergy();
+            }
+        } else if (s === "ERROR") {
+            this.playError();
+        } else if (s === "READY" || s === "IDLE") {
+            this._setEnv(null);
+            this._hide("cin-neural-field");
+            this._hide("cin-energy-flow");
+            this._hide("cin-speak-field");
+            this._hide("cin-data-wall");
+            this._hide("cin-data-rain");
+            this._hide("cin-hero-ring");
+            this._setHero(false);
+        }
+    },
+
+    onScene(scene) {
+        if (this.reduced) return;
+        this._hide("cin-decision-field");
+        this._hide("cin-scan-field");
+        this._hide("cin-exec-graph");
+        this._hide("cin-dissolve");
+
+        if (scene === "VOICE") {
+            this._setHero(true);
+            this._show("cin-hero-ring");
+            this._show("cin-data-rain");
+        } else if (scene === "RESPONSE") {
+            this._setHero(true);
+            this._show("cin-hero-ring");
+            this._show("cin-speak-field");
+            this._show("cin-data-wall");
+            this._show("cin-data-rain");
+        } else if (scene === "FILES") {
+            this._setHero(true);
+            this._setEnv("think");
+            this._show("cin-hero-ring");
+            this._show("cin-scan-field");
+            this._show("cin-data-rain");
+        } else if (scene === "SYSTEM_ACTION") {
+            this._setHero(true);
+            this._setEnv("exec");
+            this._execStep = 0;
+            this._show("cin-hero-ring");
+            this._show("cin-exec-graph");
+            this._show("cin-data-rain");
+            this.advanceExec(0);
+            if (typeof AnimationSystem !== "undefined") {
+                AnimationSystem.setCoreState("EXECUTING");
+            }
+        } else if (scene === "DECISION") {
+            this._setHero(true);
+            this._setEnv("error");
+            this._show("cin-decision-field");
+            this._show("cin-hero-ring");
+        } else if (scene === "IDLE") {
+            this._setEnv(null);
+            this._hideAllHero();
+            this._show("cin-ambient");
+        }
+    },
+
+    onSceneDissolve() {
+        if (this.reduced) return;
+        this._show("cin-dissolve", 750);
+        this._hide("cin-data-wall");
+        this._hide("cin-neural-field");
+        this._hide("cin-scan-field");
+        this._hide("cin-exec-graph");
+        this._hide("cin-decision-field");
+        this._hide("cin-speak-field");
+        this._hide("cin-energy-flow");
+        this._hide("cin-data-rain");
+        this._setHero(false);
+        if (typeof AnimationSystem !== "undefined") {
+            AnimationSystem.travelLight("response", "core");
+            const wrap = document.getElementById("hud-wrapper");
+            if (wrap && /executing|verifying/i.test(wrap.dataset.coreState || "")) {
+                AnimationSystem.setCoreState("READY");
+            }
+        }
+    },
+
+    advanceExec(step) {
+        const g = this.el("cin-exec-graph");
+        if (!g) return;
+        this._execStep = step;
+        g.querySelectorAll(".cin-exec-step").forEach((el) => {
+            const n = Number(el.getAttribute("data-step"));
+            el.classList.toggle("on", n < step);
+            el.classList.toggle("active-step", n === step);
+        });
+        if (typeof AnimationSystem !== "undefined") {
+            AnimationSystem.setCoreState(step >= 2 ? "VERIFYING" : "EXECUTING");
+        }
+    },
+
+    setFileResult(ok) {
+        const scan = this.el("cin-scan-field");
+        if (!scan || !scan.classList.contains("active")) return;
+        scan.classList.toggle("success", !!ok);
+        scan.classList.toggle("error", !ok);
+        if (ok) this.playSuccess();
+        else this.playError();
+    },
+
+    setExecComplete() {
+        const g = this.el("cin-exec-graph");
+        if (g) {
+            g.classList.add("complete");
+            g.querySelectorAll(".cin-exec-step").forEach((el) => {
+                el.classList.add("on");
+                el.classList.remove("active-step");
+            });
+        }
+        this.advanceExec(3);
+        this.playSuccess();
+        setTimeout(() => {
+            if (typeof AnimationSystem !== "undefined") AnimationSystem.setCoreState("READY");
+        }, 900);
+    },
+
+    playSuccess() {
+        if (this.reduced) return;
+        this._setEnv("success");
+        this._show("cin-success-burst", 1050);
+        setTimeout(() => this._setEnv(null), 1100);
+        if (typeof AnimationSystem !== "undefined") AnimationSystem.success();
+    },
+
+    playError() {
+        if (this.reduced) return;
+        this._setEnv("error");
+        this._setHero(true);
+        this._show("cin-error-collapse", 1100);
+        setTimeout(() => {
+            this._setEnv(null);
+            if (!document.body.classList.contains("core-listening") &&
+                !document.body.classList.contains("core-thinking") &&
+                !document.body.classList.contains("core-speaking")) {
+                this._setHero(false);
+            }
+        }, 1200);
+        if (typeof AnimationSystem !== "undefined") AnimationSystem.error();
+    },
+
+    buildNeuralField() {
+        const svg = this.el("cin-neural-field");
+        if (!svg) return;
+        svg.innerHTML = "";
+        svg.classList.remove("collapsing");
+        const W = 900, H = 560;
+        const nodes = [];
+        const count = window.innerWidth < 900 ? 28 : 48;
+        // staged layout: sparse ring → denser cloud around center
+        for (let i = 0; i < count; i++) {
+            const ang = (i / count) * Math.PI * 2;
+            const ring = 0.25 + (i % 4) * 0.18;
+            const jitter = (Math.random() - 0.5) * 70;
+            nodes.push({
+                x: W / 2 + Math.cos(ang) * (ring * Math.min(W, H) * 0.42) + jitter,
+                y: H / 2 + Math.sin(ang) * (ring * Math.min(W, H) * 0.38) + jitter * 0.6,
+                r: 2.2 + Math.random() * 3.2,
+            });
+        }
+        nodes[0] = { x: W / 2, y: H / 2, r: 6 };
+        const ns = "http://www.w3.org/2000/svg";
+        const maxDist = window.innerWidth < 900 ? 150 : 170;
+        for (let i = 0; i < nodes.length; i++) {
+            for (let j = i + 1; j < nodes.length; j++) {
+                const dx = nodes[i].x - nodes[j].x;
+                const dy = nodes[i].y - nodes[j].y;
+                const d = Math.sqrt(dx * dx + dy * dy);
+                if (d < maxDist || (i === 0 && d < 260)) {
+                    const line = document.createElementNS(ns, "line");
+                    line.setAttribute("x1", nodes[i].x);
+                    line.setAttribute("y1", nodes[i].y);
+                    line.setAttribute("x2", nodes[j].x);
+                    line.setAttribute("y2", nodes[j].y);
+                    line.setAttribute("class", "nn-link");
+                    line.style.opacity = "0";
+                    line.style.transition = `opacity 0.5s ease ${40 + i * 8}ms`;
+                    svg.appendChild(line);
+                    requestAnimationFrame(() => {
+                        line.style.opacity = String(0.2 + Math.random() * 0.45);
+                    });
+                }
+            }
+        }
+        nodes.forEach((n, idx) => {
+            const c = document.createElementNS(ns, "circle");
+            c.setAttribute("cx", n.x);
+            c.setAttribute("cy", n.y);
+            c.setAttribute("r", n.r);
+            c.setAttribute("class", "nn-node");
+            c.style.opacity = "0";
+            c.style.transition = `opacity 0.4s ease ${idx * 14}ms, transform 0.4s ease`;
+            svg.appendChild(c);
+            requestAnimationFrame(() => { c.style.opacity = "1"; });
+        });
+        const packetCount = window.innerWidth < 900 ? 5 : 8;
+        for (let p = 0; p < packetCount; p++) {
+            const a = nodes[1 + (p * 5) % (nodes.length - 1)];
+            const b = nodes[0];
+            if (!a) continue;
+            const pkt = document.createElementNS(ns, "circle");
+            pkt.setAttribute("r", "3");
+            pkt.setAttribute("fill", "#FFB000");
+            pkt.style.filter = "drop-shadow(0 0 4px #FFB000)";
+            const anim = document.createElementNS(ns, "animateMotion");
+            anim.setAttribute("dur", `${1.2 + p * 0.22}s`);
+            anim.setAttribute("repeatCount", "indefinite");
+            anim.setAttribute("path", `M${a.x} ${a.y} Q${(a.x + b.x) / 2} ${(a.y + b.y) / 2 - 40} ${b.x} ${b.y}`);
+            pkt.appendChild(anim);
+            svg.appendChild(pkt);
+        }
+    },
+
+    collapseNeural() {
+        const svg = this.el("cin-neural-field");
+        if (!svg || !svg.classList.contains("active")) return;
+        svg.classList.add("collapsing");
+        setTimeout(() => this._hide("cin-neural-field"), 520);
+    },
+
+    initParallax() {
+        // Parallax disabled — page should stay fixed under mouse move
+    },
+};
+
+// ── HUD POPUPS (declutter docks) ───────────────────────
+function initHudPopups() {
+    document.querySelectorAll("[data-open-popup]").forEach((btn) => {
+        btn.addEventListener("click", () => openHudPopup(btn.getAttribute("data-open-popup")));
+    });
+    const backdrop = document.getElementById("hud-popup-backdrop");
+    if (backdrop) backdrop.addEventListener("click", () => closeHudPopup());
+    document.querySelectorAll("[data-close-popup]").forEach((btn) => {
+        btn.addEventListener("click", () => closeHudPopup());
+    });
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") closeHudPopup();
+    });
+}
+
+function openHudPopup(name) {
+    if (!name || name === "system-overview" || name === "system-health") return;
+    const layer = document.getElementById("hud-popup-layer");
+    if (!layer) return;
+    layer.hidden = false;
+    document.body.classList.add("hud-popup-open");
+    layer.querySelectorAll(".hud-popup").forEach((panel) => {
+        const match = panel.getAttribute("data-popup") === name;
+        panel.hidden = !match;
+        panel.classList.toggle("is-open", match);
+        if (match) {
+            panel.classList.remove("is-closing", "is-settled", "is-constructing");
+            void panel.offsetWidth;
+            panel.classList.add("is-entering");
+            setTimeout(() => {
+                panel.classList.remove("is-entering");
+                panel.classList.add("is-settled");
+            }, 360);
+        } else {
+            panel.classList.remove("is-open", "is-entering", "is-constructing", "is-settled", "is-closing");
+        }
+    });
+    document.querySelectorAll(".ref-tool, .dock-btn").forEach((btn) => {
+        btn.classList.toggle("active", btn.getAttribute("data-open-popup") === name);
+    });
+}
+
+function closeHudPopup() {
+    const layer = document.getElementById("hud-popup-layer");
+    if (!layer || layer.hidden) return;
+    const open = layer.querySelector(".hud-popup.is-open");
+    if (open) {
+        open.classList.remove("is-settled", "is-entering", "is-constructing");
+        open.classList.add("is-closing");
+        setTimeout(() => {
+            open.hidden = true;
+            open.classList.remove("is-open", "is-closing");
+            layer.hidden = true;
+            document.body.classList.remove("hud-popup-open");
+        }, 280);
+    } else {
+        layer.hidden = true;
+        document.body.classList.remove("hud-popup-open");
+    }
+    document.querySelectorAll(".ref-tool, .dock-btn").forEach((btn) => btn.classList.remove("active"));
+}
+
 // ── INIT ───────────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", () => {
     generateSessionId();
@@ -187,6 +1068,62 @@ document.addEventListener("DOMContentLoaded", () => {
     buildRingTicks();
     loadConversationHistory();
     initProactiveToggle();
+    SceneController._setStagePhase("idle");
+    SceneController._setBodyScene("IDLE");
+    initHudPopups();
+    if (typeof CinematicSystem !== "undefined") {
+        CinematicSystem.initParallax();
+        CinematicSystem.playBoot();
+    }
+
+    // Preview: ?fx=exec | ?fx=verify
+    const fx = new URLSearchParams(location.search).get("fx");
+    if (fx === "exec" || fx === "verify") {
+        setTimeout(() => {
+            if (typeof AnimationSystem === "undefined") return;
+            if (fx === "verify") {
+                AnimationSystem.setCoreState("VERIFYING");
+                setTimeout(() => AnimationSystem.setCoreState("READY"), 4500);
+            } else {
+                AnimationSystem.setCoreState("EXECUTING");
+                setTimeout(() => AnimationSystem.setCoreState("VERIFYING"), 2200);
+                setTimeout(() => AnimationSystem.setCoreState("READY"), 4500);
+            }
+        }, 1700);
+    }
+
+    // Interactive HUD affordances
+    document.querySelectorAll(".module-row[role='button']").forEach((row) => {
+        const activate = () => {
+            const label = row.querySelector(".mod-label")?.textContent?.trim() || "module";
+            quickCmd(`Status check: ${label}`);
+            closeHudPopup();
+        };
+        row.addEventListener("click", activate);
+        row.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                activate();
+            }
+        });
+    });
+
+    document.querySelectorAll("#state-ladder li[data-state]:not([hidden])").forEach((li) => {
+        li.addEventListener("click", () => {
+            if (typeof setVoiceState === "function") {
+                setVoiceState(li.dataset.state);
+            } else {
+                document.querySelectorAll("#state-ladder li").forEach((n) => n.classList.remove("on"));
+                li.classList.add("on");
+            }
+        });
+        li.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                li.click();
+            }
+        });
+    });
 
     // Section 21: hide the "new messages" pill once the user scrolls
     // back down near the bottom themselves.
@@ -208,18 +1145,23 @@ function generateSessionId() {
 
 // ── CLOCK ──────────────────────────────────────────────
 function startClock() {
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sept", "Oct", "Nov", "Dec"];
     function tick() {
         const now  = new Date();
-        const time = now.toTimeString().split(" ")[0];
-        const date = now.toLocaleDateString("en-GB", {
-            day:   "2-digit",
-            month: "short",
-            year:  "numeric",
-        }).toUpperCase();
+        const hh = String(now.getHours()).padStart(2, "0");
+        const mm = String(now.getMinutes()).padStart(2, "0");
+        const time = `${hh}:${mm}`;
+        const dd = now.getDate();
+        const date = `${days[now.getDay()]}, ${dd} ${months[now.getMonth()]} ${now.getFullYear()}`;
         const clockEl = document.getElementById("clock-display");
         const dateEl  = document.getElementById("date-display");
         if (clockEl) clockEl.textContent = time;
         if (dateEl)  dateEl.textContent  = date;
+        const healthClock = document.getElementById("health-clock");
+        const healthDate = document.getElementById("health-date");
+        if (healthClock) healthClock.textContent = time;
+        if (healthDate) healthDate.textContent = date;
     }
     tick();
     setInterval(tick, 1000);
@@ -289,6 +1231,7 @@ function handleWsMessage(data) {
                 // Update response panel for voice messages too
                 updateResponsePanel(data.content);
                 setResponseStatus("STANDBY");
+                SceneController.enter("RESPONSE");
                 // NOTE: this event fires when the TEXT transcript of
                 // JARVIS's reply arrives over the WebSocket — that only
                 // proves a response was GENERATED, not that TTS audio
@@ -320,6 +1263,17 @@ function handleWsMessage(data) {
             // state.py's set_state() docstring for why same-state
             // calls are allowed through.
             updateBackendProgress(data);
+            if (data.state === "EXECUTING") {
+                SceneController.enter("SYSTEM_ACTION", { detail: data.detail || "EXECUTING…" });
+            } else if (data.state === "IDLE" || data.state === "READY" || data.state === "SPEAKING") {
+                if (SceneController.current === "SYSTEM_ACTION") {
+                    setTimeout(() => {
+                        if (SceneController.current === "SYSTEM_ACTION") {
+                            SceneController.dissolveToIdle();
+                        }
+                    }, 900);
+                }
+            }
             break;
 
         case "voice_state":
@@ -336,14 +1290,17 @@ function handleWsMessage(data) {
             if (!voiceActive) break;
             if (data.state === "thinking") {
                 setVoiceState("THINKING");
+                SceneController.enter("VOICE", { state: "THINKING" });
             } else if (data.state === "speaking") {
                 jarvisSpeaking = true;
                 setVoiceState("SPEAKING");
                 playChime("speakStart");
+                SceneController.enter("VOICE", { state: "SPEAKING" });
             } else if (data.state === "listening") {
                 jarvisSpeaking = false;
                 setVoiceState("LISTENING");
                 playChime("listenStart");
+                SceneController.enter("VOICE", { state: "LISTENING" });
             }
             break;
 
@@ -383,6 +1340,8 @@ function handleWsMessage(data) {
             {
                 const el = document.getElementById("active-mode-value");
                 if (el) el.textContent = data.mode || "ASSISTANT";
+                const chip = document.getElementById("idle-mode-chip");
+                if (chip) chip.textContent = data.mode || "ASSISTANT";
             }
             break;
 
@@ -398,6 +1357,9 @@ function handleWsMessage(data) {
             // Section 15 ("use the existing JARVIS response/
             // conversation system"), not a new dashboard.
             renderConfirmationRequest(data);
+            SceneController.enter("DECISION", {
+                reason: data.reason || `Confirm "${data.tool}"?`,
+            });
             break;
 
         default:
@@ -413,26 +1375,48 @@ function setWsStatus(status) {
         status === "ONLINE"       ? "online"  :
         status === "RECONNECTING" ? "warning" : "offline"
     );
+    const link = document.getElementById("idle-link-status");
+    if (link) {
+        link.textContent = status === "ONLINE" ? "ONLINE" : status;
+        link.className = "plate-val" + (status === "ONLINE" ? " ok" : "");
+    }
+    const dot = document.getElementById("dot-backend");
+    if (dot && status === "RECONNECTING") {
+        dot.classList.add("reconnecting");
+    }
 }
 
 // ── FIX 4: Visual voice state ─────────────────────────
 function setVoiceState(state) {
     const label = document.getElementById("voice-label");
     const btn   = document.getElementById("voice-btn");
-    // Redesign: mirrors the same state onto the small "VOICE STATUS"
-    // readout below the reactor (see index.html's .reactor-meta) —
-    // purely a second display of the same real state voice-label
-    // already carries, not a separate/fake status.
+    const normalized = (state === "ACTIVATE" || state === "IDLE") ? "READY" : state;
     const statusReadout = document.getElementById("voice-status-value");
-    if (statusReadout) statusReadout.textContent = state;
+    if (statusReadout) statusReadout.textContent = normalized === "READY" ? "IDLE" : normalized;
     if (!label || !btn) return;
 
-    label.textContent = state;
+    label.textContent = normalized === "READY" ? "READY" : normalized;
 
-    btn.classList.remove("active", "speaking", "thinking");
-    if (state === "LISTENING")       btn.classList.add("active");
-    if (state === "SPEAKING") btn.classList.add("speaking");
-    if (state === "THINKING") btn.classList.add("thinking");
+    btn.classList.remove("active", "speaking", "thinking", "error");
+    if (normalized === "LISTENING") btn.classList.add("active");
+    if (normalized === "SPEAKING")  btn.classList.add("speaking");
+    if (normalized === "THINKING")  btn.classList.add("thinking");
+    if (normalized === "ERROR")     btn.classList.add("error");
+
+    const voiceChip = document.getElementById("idle-voice-chip");
+    if (voiceChip) voiceChip.textContent = normalized;
+
+    document.querySelectorAll("#state-ladder li").forEach((li) => {
+        li.classList.toggle("on", li.dataset.state === normalized);
+    });
+
+    if (typeof AnimationSystem !== "undefined") {
+        AnimationSystem.setCoreState(normalized);
+        if (normalized === "ERROR") AnimationSystem.error();
+    }
+    if (typeof CinematicSystem !== "undefined") {
+        CinematicSystem.onVoiceState(normalized);
+    }
 }
 
 // ── STATUS POLLING ─────────────────────────────────────
@@ -470,6 +1454,11 @@ function updateStatusFromData(data) {
             data.backend === "online" ? "online" : "offline"
         );
     }
+    const onlineLabel = document.getElementById("header-online-label");
+    if (onlineLabel) {
+        onlineLabel.textContent = data.backend === "online" ? "ONLINE" : "OFFLINE";
+        onlineLabel.style.color = data.backend === "online" ? "" : "var(--red)";
+    }
 
     // Section 8 / redesign: reflect the real backend/vision state
     // already returned by /status onto the Core Modules list, instead
@@ -498,11 +1487,12 @@ function setModuleStatus(id, isOnline) {
 function setStatusValue(id, value) {
     const el = document.getElementById(id);
     if (!el) return;
-    el.textContent = value.toUpperCase();
-    el.className   = "info-value " + (
-        value === "online"      || value === "configured" ? "online"  :
-        value === "offline"     || value === "error"      ? "offline" :
-        value === "not configured"                        ? "warning" : ""
+    const raw = String(value || "").toLowerCase();
+    el.textContent = String(value || "").toUpperCase();
+    el.className = "info-value " + (
+        raw === "online" || raw === "configured" || raw === "connected" ? "online" :
+        raw === "offline" || raw === "error" ? "offline" :
+        raw.includes("reconnect") || raw === "connecting" || raw === "not configured" ? "warning" : ""
     );
 }
 
@@ -540,15 +1530,25 @@ function renderEvents(events) {
     const list = document.getElementById("events-list");
     if (!list) return;
     list.innerHTML = "";
-    events.slice().reverse().forEach(ev => {
+    if (!events.length) {
+        const empty = document.createElement("div");
+        empty.className = "ref-event";
+        empty.innerHTML = `<span class="ref-event-time">—</span><span class="ref-event-msg">No events yet</span>`;
+        list.appendChild(empty);
+        return;
+    }
+    events.slice().reverse().forEach((ev) => {
         const entry = document.createElement("div");
-        entry.className = "log-entry " + (
-            ev.event_type === "error"        ? "error"   :
-            ev.event_type === "agent_start"  ||
-            ev.event_type === "system_start" ? "success" : "info"
+        entry.className = "ref-event log-entry " + (
+            ev.event_type === "error" ? "error" :
+            ev.event_type === "agent_start" || ev.event_type === "system_start" ? "success" : "info"
         );
-        const time = new Date(ev.timestamp).toLocaleTimeString();
-        entry.textContent = `[${time}] ${ev.message}`;
+        const d = new Date(ev.timestamp);
+        const time = Number.isNaN(d.getTime())
+            ? "—"
+            : `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+        entry.innerHTML = `<span class="ref-event-time">${time}</span><span class="ref-event-msg"></span>`;
+        entry.querySelector(".ref-event-msg").textContent = ev.message || ev.event_type || "Event";
         list.appendChild(entry);
     });
 }
@@ -704,6 +1704,12 @@ function handleFileSelect(event) {
     selectedFile = file;
     selectedFilePreviewB64 = null;
 
+    SceneController.enter("FILES", {
+        name: file.name,
+        status: "QUEUED",
+        clearThumb: true,
+    });
+
     if (IMAGE_FILE_EXTENSIONS.includes(ext)) {
         // Section 6: real image preview (not just the filename) in the
         // command bar chip, generated client-side so it's instant.
@@ -714,6 +1720,11 @@ function handleFileSelect(event) {
             selectedFilePreviewB64 = comma >= 0 ? dataUrl.slice(comma + 1) : null;
             showFileChip(file.name, dataUrl);
             setFileChipState("idle", "");
+            SceneController.update("FILES", {
+                name: file.name,
+                status: "READY",
+                preview: dataUrl,
+            });
         };
         reader.onerror = () => {
             showFileChip(file.name);
@@ -723,6 +1734,11 @@ function handleFileSelect(event) {
     } else {
         showFileChip(file.name);
         setFileChipState("idle", "");
+        SceneController.update("FILES", {
+            name: file.name,
+            status: "READY",
+            clearThumb: true,
+        });
     }
 }
 
@@ -735,6 +1751,7 @@ function clearSelectedFile() {
     if (thumb) { thumb.style.display = "none"; thumb.src = ""; }
     const fileInput = document.getElementById("file-input");
     if (fileInput) fileInput.value = "";
+    if (SceneController.current === "FILES") SceneController.dissolveToIdle();
 }
 
 function showFileChip(name, previewDataUrl) {
@@ -818,6 +1835,7 @@ function updateBackendProgress(data) {
     if (data.state === "EXECUTING" && data.detail) {
         progressEl.textContent = data.detail;
         progressEl.style.display = "block";
+        SceneController.update("SYSTEM_ACTION", { detail: data.detail });
     } else {
         // Any other state (IDLE, SPEAKING, THINKING with no detail,
         // ERROR) means whatever multi-step work was running is done —
@@ -835,6 +1853,7 @@ function updateBackendProgress(data) {
 function updateResponsePanel(text) {
     const el = document.getElementById("response-text");
     if (!el) return;
+    if (text) SceneController.enter("RESPONSE");
     clearTypewriter();
     el.classList.remove("thinking");
     el.classList.remove("markdown-body");
@@ -857,6 +1876,13 @@ function updateResponsePanel(text) {
             el.classList.add("markdown-body");
             el.innerHTML = renderMarkdown(text);
             enhanceCodeBlocks(el);
+            // After a response settles, quietly return to idle if no
+            // other scene has taken over.
+            setTimeout(() => {
+                if (SceneController.current === "RESPONSE" && SceneController.phase === "settled") {
+                    SceneController.dissolveToIdle();
+                }
+            }, 12000);
         }
     }, 18);
 }
@@ -1244,6 +2270,12 @@ function renderConfirmationRequest(data) {
     async function resolve(approved) {
         allowBtn.disabled = true;
         denyBtn.disabled = true;
+        (approved ? allowBtn : denyBtn).classList.add("energy-select");
+        if (typeof AnimationSystem !== "undefined") {
+            AnimationSystem.burst();
+            if (!approved) AnimationSystem.error();
+            else AnimationSystem.success();
+        }
         statusEl.textContent = approved ? "Running..." : "Cancelling...";
         try {
             const res = await fetch(`${BACKEND_URL}/confirmations/${data.id}`, {
@@ -1254,6 +2286,7 @@ function renderConfirmationRequest(data) {
             const result = await res.json();
             if (!approved) {
                 statusEl.textContent = "Denied.";
+                if (SceneController.current === "DECISION") SceneController.dissolveToIdle();
                 return;
             }
             const execution = result.execution || {};
@@ -1264,8 +2297,10 @@ function renderConfirmationRequest(data) {
             } else {
                 statusEl.textContent = "Done.";
             }
+            if (SceneController.current === "DECISION") SceneController.dissolveToIdle();
         } catch (e) {
             statusEl.textContent = `Request failed: ${e.message}`;
+            setVoiceState("ERROR");
         }
     }
 
@@ -1301,9 +2336,34 @@ async function loadConversationHistory() {
     } catch (e) {}
 }
 
+function ensureConvEmptyState() {
+    const list = document.getElementById("conversation-list");
+    if (!list) return;
+    if (list.querySelector(".chat-bubble")) return;
+    if (list.querySelector("#conv-empty")) return;
+    list.innerHTML = `
+        <div class="conv-empty" id="conv-empty">
+            <div class="conv-empty-frame">
+                <span class="conv-empty-bracket tl"></span>
+                <span class="conv-empty-bracket tr"></span>
+                <span class="conv-empty-bracket bl"></span>
+                <span class="conv-empty-bracket br"></span>
+                <div class="conv-empty-scan"></div>
+                <div class="conv-empty-title">STREAM STANDBY</div>
+                <div class="conv-empty-copy">Dialogue will assemble here as you speak or issue commands.</div>
+                <div class="conv-empty-channels">
+                    <span>TEXT</span>
+                    <span>VOICE</span>
+                    <span>SYSTEM</span>
+                </div>
+            </div>
+        </div>`;
+}
+
 function clearConversation() {
     const list = document.getElementById("conversation-list");
     if (list) list.innerHTML = "";
+    ensureConvEmptyState();
     fetch(`${BACKEND_URL}/sessions/clear`, {
         method:  "POST",
         headers: { "Content-Type": "application/json" },
@@ -1339,6 +2399,14 @@ async function activateVoice() {
     const mic   = document.getElementById("mic-indicator");
 
     try {
+        if (typeof AnimationSystem !== "undefined") {
+            await AnimationSystem.playActivationSequence();
+        }
+        if (typeof CinematicSystem !== "undefined") {
+            CinematicSystem.onVoiceActivate();
+        }
+        playChime("listenStart");
+
         const res  = await fetch(`${BACKEND_URL}/livekit/token?room=jarvis-room&identity=user-${Date.now()}`);
         const data = await res.json();
         if (!data.token) throw new Error("No token received");
@@ -1524,11 +2592,17 @@ async function activateVoice() {
         if (btn) btn.classList.add("active");
         if (mic) mic.classList.add("active");
         setVoiceState("LISTENING");
+        SceneController.enter("VOICE", { state: "LISTENING" });
 
         document.getElementById("audio-status").textContent = "ACTIVE";
         addLogEntry("Voice assistant activated.", "success");
-        updateResponsePanel("Voice activated. Listening, Sir.");
-
+        // Update response text without forcing RESPONSE scene over VOICE.
+        const resp = document.getElementById("response-text");
+        if (resp) {
+            clearTypewriter();
+            resp.classList.remove("thinking", "markdown-body", "typing-cursor");
+            resp.textContent = "Voice activated. Listening, Sir.";
+        }
     } catch (e) {
         console.error("[JARVIS] Voice error:", e);
         addLogEntry("Voice activation failed: " + e.message, "error");
@@ -1567,7 +2641,8 @@ async function deactivateVoice() {
 
     if (btn) btn.classList.remove("active", "speaking");
     if (mic) mic.classList.remove("active");
-    setVoiceState("ACTIVATE");
+    setVoiceState("READY");
+    if (SceneController.current === "VOICE") SceneController.dissolveToIdle();
 
     document.getElementById("audio-status").textContent = "IDLE";
     addLogEntry("Voice assistant deactivated.", "info");
@@ -1612,98 +2687,112 @@ function drawRadialWaveform() {
     if (!poly) return;
 
     const CX = 200, CY = 200;      // matches the SVG viewBox center (400x400)
-    const BASE_R = 90;             // resting radius — inside the arc rings, around the button
-    const MAX_SPIKE = 22;          // how far spikes reach outward at full volume
-    const POINTS = 64;             // resolution of the ring
+    const BASE_R = 90;
+    const MAX_SPIKE = 22;
+    const POINTS = 48;
+    let lastIdle = 0;
+    let idlePts = "";
 
-    function frame() {
+    function frame(now) {
         requestAnimationFrame(frame);
         poly.classList.toggle("jarvis-speaking", jarvisSpeaking);
 
-        let pts = [];
         if (analyser && voiceActive) {
             const bufLen = analyser.frequencyBinCount;
-            const data   = new Uint8Array(bufLen);
+            const data = new Uint8Array(bufLen);
             analyser.getByteTimeDomainData(data);
-
+            const pts = [];
             for (let i = 0; i < POINTS; i++) {
                 const dataIdx = Math.floor((i / POINTS) * bufLen);
-                const v = (data[dataIdx] - 128) / 128.0; // -1..1
+                const v = (data[dataIdx] - 128) / 128.0;
                 const r = BASE_R + v * MAX_SPIKE;
                 const angle = (i / POINTS) * Math.PI * 2;
                 pts.push(`${(CX + r * Math.cos(angle)).toFixed(1)},${(CY + r * Math.sin(angle)).toFixed(1)}`);
             }
-        } else {
-            // Idle: a gentle, slow-breathing near-perfect circle instead
-            // of a flat line — feels like standby, not "broken".
-            const t = performance.now() / 1000;
-            const breathe = Math.sin(t * 0.8) * 2;
-            for (let i = 0; i < POINTS; i++) {
-                const angle = (i / POINTS) * Math.PI * 2;
-                const r = BASE_R * 0.5 + breathe;
-                pts.push(`${(CX + r * Math.cos(angle)).toFixed(1)},${(CY + r * Math.sin(angle)).toFixed(1)}`);
-            }
+            poly.setAttribute("points", pts.join(" "));
+            return;
         }
-        poly.setAttribute("points", pts.join(" "));
+
+        // Idle: update infrequently — static soft circle
+        if (now - lastIdle < 200) return;
+        lastIdle = now;
+        const t = now / 1000;
+        const breathe = Math.sin(t * 0.6) * 1.5;
+        const pts = [];
+        for (let i = 0; i < POINTS; i++) {
+            const angle = (i / POINTS) * Math.PI * 2;
+            const r = BASE_R * 0.5 + breathe;
+            pts.push(`${(CX + r * Math.cos(angle)).toFixed(1)},${(CY + r * Math.sin(angle)).toFixed(1)}`);
+        }
+        idlePts = pts.join(" ");
+        poly.setAttribute("points", idlePts);
     }
-    frame();
+    requestAnimationFrame(frame);
 }
 
 function drawWaveform() {
     const canvas = document.getElementById("waveform-canvas");
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    canvas.width = canvas.offsetWidth || 240;
+    const ctx = canvas.getContext("2d", { alpha: true });
+    let lastIdleDraw = 0;
 
-    function draw() {
-        waveformAnimId = requestAnimationFrame(draw);
+    function size() {
+        const w = Math.max(1, Math.floor(canvas.clientWidth || 240));
+        if (canvas.width !== w) canvas.width = w;
+    }
+
+    function drawIdleLine() {
+        size();
         const W = canvas.width;
         const H = canvas.height;
         ctx.clearRect(0, 0, W, H);
-
-        if (analyser && voiceActive) {
-            const bufLen = analyser.frequencyBinCount;
-            const data   = new Uint8Array(bufLen);
-            analyser.getByteTimeDomainData(data);
-
-            ctx.beginPath();
-            // ── FIX 4: Different color when JARVIS is speaking ─
-            ctx.strokeStyle = jarvisSpeaking
-                ? "rgba(0, 255, 136, 0.9)"
-                : "rgba(0, 212, 255, 0.9)";
-            ctx.lineWidth   = 1.5;
-            ctx.shadowBlur  = 6;
-            ctx.shadowColor = jarvisSpeaking
-                ? "rgba(0, 255, 136, 0.6)"
-                : "rgba(0, 212, 255, 0.6)";
-
-            const sliceW = W / bufLen;
-            let x = 0;
-            for (let i = 0; i < bufLen; i++) {
-                const v = data[i] / 128.0;
-                const y = (v * H) / 2;
-                if (i === 0) ctx.moveTo(x, y);
-                else         ctx.lineTo(x, y);
-                x += sliceW;
-            }
-            ctx.lineTo(W, H / 2);
-            ctx.stroke();
-
-        } else {
-            ctx.beginPath();
-            ctx.strokeStyle = "rgba(0, 212, 255, 0.25)";
-            ctx.lineWidth   = 1;
-            ctx.shadowBlur  = 0;
-            const midY = H / 2;
-            ctx.moveTo(0, midY);
-            for (let x = 0; x < W; x += 4) {
-                const noise = (Math.random() - 0.5) * 2;
-                ctx.lineTo(x, midY + noise);
-            }
-            ctx.lineTo(W, midY);
-            ctx.stroke();
-        }
+        ctx.beginPath();
+        ctx.strokeStyle = "rgba(212, 160, 23, 0.28)";
+        ctx.lineWidth = 1.25;
+        ctx.shadowBlur = 0;
+        const midY = H / 2;
+        ctx.moveTo(0, midY);
+        ctx.lineTo(W, midY);
+        ctx.stroke();
     }
+
+    function draw() {
+        waveformAnimId = requestAnimationFrame(draw);
+        if (!(analyser && voiceActive)) {
+            const now = performance.now();
+            if (now - lastIdleDraw > 400) {
+                drawIdleLine();
+                lastIdleDraw = now;
+            }
+            return;
+        }
+        size();
+        const W = canvas.width;
+        const H = canvas.height;
+        ctx.clearRect(0, 0, W, H);
+        const bufLen = analyser.frequencyBinCount;
+        const data = new Uint8Array(bufLen);
+        analyser.getByteTimeDomainData(data);
+        // downsample for smoother/cheaper draw
+        const step = Math.max(1, Math.floor(bufLen / Math.min(W, 180)));
+        ctx.beginPath();
+        ctx.strokeStyle = jarvisSpeaking
+            ? "rgba(111, 164, 125, 0.9)"
+            : "rgba(255, 176, 0, 0.9)";
+        ctx.lineWidth = 1.5;
+        ctx.shadowBlur = 0;
+        let x = 0;
+        const sliceW = (W * step) / bufLen;
+        for (let i = 0; i < bufLen; i += step) {
+            const v = data[i] / 128.0;
+            const y = (v * H) / 2;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+            x += sliceW;
+        }
+        ctx.stroke();
+    }
+    drawIdleLine();
     draw();
 }
 
@@ -1741,63 +2830,146 @@ function buildTicks(containerId, count, radiusFactor, shortLen, longLen) {
 function initParticles() {
     const canvas = document.getElementById("particle-canvas");
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { alpha: true });
+    const reduced = typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (reduced) {
+        canvas.style.display = "none";
+        return;
+    }
 
     function resize() {
-        canvas.width  = window.innerWidth;
-        canvas.height = window.innerHeight;
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+        canvas.width = Math.floor(window.innerWidth * dpr);
+        canvas.height = Math.floor(window.innerHeight * dpr);
+        canvas.style.width = window.innerWidth + "px";
+        canvas.style.height = window.innerHeight + "px";
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
     resize();
-    window.addEventListener("resize", resize);
+    let resizeTimer = 0;
+    window.addEventListener("resize", () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(resize, 120);
+    });
 
-    const PARTICLE_COUNT = 80;
+    const isNarrow = window.innerWidth < 1100;
+    const PARTICLE_COUNT = isNarrow ? 16 : 24;
     const particles = [];
+    let burstSparks = [];
+    let coreCache = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    let coreTick = 0;
+    let lastFrame = 0;
 
     for (let i = 0; i < PARTICLE_COUNT; i++) {
         particles.push({
-            x:       Math.random() * window.innerWidth,
-            y:       Math.random() * window.innerHeight,
-            vx:      (Math.random() - 0.5) * 0.3,
-            vy:      (Math.random() - 0.5) * 0.3,
-            radius:  Math.random() * 1.5 + 0.3,
-            opacity: Math.random() * 0.4 + 0.1,
+            x: Math.random() * window.innerWidth,
+            y: Math.random() * window.innerHeight,
+            vx: (Math.random() - 0.5) * 0.18,
+            vy: (Math.random() - 0.5) * 0.18,
+            radius: Math.random() * 1.1 + 0.25,
+            opacity: Math.random() * 0.28 + 0.06,
+            attract: Math.random() > 0.6,
         });
     }
 
-    function drawParticles() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        for (let i = 0; i < particles.length; i++) {
-            for (let j = i + 1; j < particles.length; j++) {
-                const dx   = particles[i].x - particles[j].x;
-                const dy   = particles[i].y - particles[j].y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist < 120) {
-                    ctx.beginPath();
-                    ctx.strokeStyle = `rgba(0, 212, 255, ${0.06 * (1 - dist / 120)})`;
-                    ctx.lineWidth   = 0.5;
-                    ctx.moveTo(particles[i].x, particles[i].y);
-                    ctx.lineTo(particles[j].x, particles[j].y);
-                    ctx.stroke();
+    window.__jarvisParticleBurst = function (cx, cy, color) {
+        const n = isNarrow ? 12 : 18;
+        for (let i = 0; i < n; i++) {
+            const ang = (Math.PI * 2 * i) / n + Math.random() * 0.2;
+            const sp = 1.1 + Math.random() * 2;
+            burstSparks.push({
+                x: cx, y: cy,
+                vx: Math.cos(ang) * sp,
+                vy: Math.sin(ang) * sp,
+                life: 1,
+                radius: 1 + Math.random(),
+                color: color || "255,176,0",
+            });
+        }
+    };
+
+    function refreshCore() {
+        const el = document.getElementById("hud-wrapper") || document.getElementById("voice-btn");
+        if (!el) return;
+        const r = el.getBoundingClientRect();
+        coreCache = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }
+
+    function drawParticles(now) {
+        requestAnimationFrame(drawParticles);
+        const mode = (typeof AnimationSystem !== "undefined" && AnimationSystem.particleMode) || "idle";
+        const active = mode !== "idle";
+        // Idle: ~20fps. Active: full rate.
+        const minDelta = active ? 16 : 48;
+        if (now - lastFrame < minDelta) return;
+        lastFrame = now;
+
+        const w = window.innerWidth;
+        const h = window.innerHeight;
+        ctx.clearRect(0, 0, w, h);
+
+        if (++coreTick % 30 === 0) refreshCore();
+
+        const linkAlpha = active ? 0.08 : 0;
+        const speed = mode === "thinking" ? 1.5 : mode === "voice" ? 1.25 : mode === "speaking" ? 1.35 : 1;
+        let rgb = "255,176,0";
+        if (mode === "error") rgb = "200,60,60";
+
+        // Skip expensive link graph when idle
+        if (active && linkAlpha > 0) {
+            const maxD = mode === "thinking" ? 110 : 90;
+            for (let i = 0; i < particles.length; i++) {
+                for (let j = i + 1; j < particles.length; j++) {
+                    const dx = particles[i].x - particles[j].x;
+                    const dy = particles[i].y - particles[j].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < maxD) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = `rgba(${rgb}, ${linkAlpha * (1 - dist / maxD)})`;
+                        ctx.lineWidth = 0.5;
+                        ctx.moveTo(particles[i].x, particles[i].y);
+                        ctx.lineTo(particles[j].x, particles[j].y);
+                        ctx.stroke();
+                    }
                 }
             }
         }
-        particles.forEach(p => {
+
+        ctx.shadowBlur = 0;
+        particles.forEach((p) => {
+            if ((mode === "voice" || mode === "thinking") && p.attract) {
+                p.vx += (coreCache.x - p.x) * 0.00003;
+                p.vy += (coreCache.y - p.y) * 0.00003;
+            }
             ctx.beginPath();
             ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-            ctx.fillStyle   = `rgba(0, 212, 255, ${p.opacity})`;
-            ctx.shadowBlur  = 4;
-            ctx.shadowColor = "rgba(0, 212, 255, 0.4)";
+            ctx.fillStyle = `rgba(${rgb}, ${p.opacity * (active ? 1.3 : 0.85)})`;
             ctx.fill();
-            p.x += p.vx;
-            p.y += p.vy;
-            if (p.x < 0) p.x = canvas.width;
-            if (p.x > canvas.width)  p.x = 0;
-            if (p.y < 0) p.y = canvas.height;
-            if (p.y > canvas.height) p.y = 0;
+            p.x += p.vx * speed;
+            p.y += p.vy * speed;
+            p.vx *= 0.996;
+            p.vy *= 0.996;
+            if (p.x < 0) p.x = w;
+            if (p.x > w) p.x = 0;
+            if (p.y < 0) p.y = h;
+            if (p.y > h) p.y = 0;
         });
-        requestAnimationFrame(drawParticles);
+
+        if (burstSparks.length) {
+            burstSparks = burstSparks.filter((s) => s.life > 0.02);
+            burstSparks.forEach((s) => {
+                ctx.beginPath();
+                ctx.arc(s.x, s.y, s.radius * s.life, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(${s.color}, ${s.life})`;
+                ctx.fill();
+                s.x += s.vx;
+                s.y += s.vy;
+                s.life *= 0.93;
+            });
+        }
     }
-    drawParticles();
+    refreshCore();
+    requestAnimationFrame(drawParticles);
 }
 
 // ── AGENT CONTROLS ─────────────────────────────────────
