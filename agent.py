@@ -235,21 +235,35 @@ async def entrypoint(ctx: agents.JobContext):
         if state:
             asyncio.create_task(send_state_to_backend(state))
 
+    # BVC enhanced noise cancellation requires LiveKit Cloud. On local
+    # livekit-server --dev it breaks the audio input path (agent joins
+    # but never hears the mic) — which looks like "stuck on LISTENING".
+    # Only enable it for real Cloud URLs.
+    lk_url = (os.getenv("LIVEKIT_URL") or "").lower()
+    use_bvc = "livekit.cloud" in lk_url
+    if use_bvc:
+        try:
+            room_input = RoomInputOptions(
+                noise_cancellation=noise_cancellation.BVC(),
+            )
+            print("[JARVIS AGENT] Using LiveKit Cloud BVC noise cancellation.")
+        except Exception as e:
+            print(f"[JARVIS AGENT] BVC unavailable ({e}) — starting without it.")
+            room_input = RoomInputOptions()
+    else:
+        print("[JARVIS AGENT] Local LiveKit — starting without BVC (mic audio path).")
+        room_input = RoomInputOptions()
+
     try:
         await session.start(
             room=ctx.room,
             agent=Assistant(),
-            room_input_options=RoomInputOptions(
-                noise_cancellation=noise_cancellation.BVC(),
-            ),
+            room_input_options=room_input,
         )
     except Exception as e:
-        # If this fails (e.g. the BVC noise-cancellation plugin can't
-        # load/license itself, or STT/TTS model loading throws), the
-        # agent process would otherwise sit there having registered with
-        # the room but never actually listening — which looks identical
-        # to "JARVIS does not respond" from the browser side. Surface it
-        # loudly instead of letting it disappear into the framework.
+        # If this fails (STT/TTS model loading, etc.), the agent would
+        # otherwise sit registered but never listening — same symptom
+        # as "JARVIS does not respond" from the browser.
         print(f"[JARVIS AGENT ERROR] session.start() failed: {e}")
         logger.error(f"session.start() failed: {e}", exc_info=True)
         raise
@@ -321,9 +335,23 @@ Keep the entire greeting to ONE short sentence.
 
 
 if __name__ == "__main__":
-    agents.cli.run_app(
-        agents.WorkerOptions(
-            entrypoint_fnc=entrypoint,
-            agent_name="Jarvis",
-        )
-    )
+    # Named agents ONLY receive explicit CreateAgentDispatch jobs. On
+    # local livekit-server --dev that dispatch often fails or races,
+    # leaving the browser alone in the room (LISTENING, no STT).
+    # Default: unnamed worker on localhost (auto job accept); named
+    # "Jarvis" elsewhere. Override with JARVIS_AGENT_NAME ("" = auto).
+    lk_url = (os.getenv("LIVEKIT_URL") or "").lower()
+    is_local = "localhost" in lk_url or "127.0.0.1" in lk_url
+    agent_name = os.getenv("JARVIS_AGENT_NAME")
+    if agent_name is None:
+        agent_name = "" if is_local else "Jarvis"
+    agent_name = agent_name.strip()
+
+    worker_kwargs = {"entrypoint_fnc": entrypoint}
+    if agent_name:
+        worker_kwargs["agent_name"] = agent_name
+        print(f"[JARVIS AGENT] Worker name={agent_name!r} (explicit dispatch required)")
+    else:
+        print("[JARVIS AGENT] Unnamed worker (auto-accept room jobs — local mode)")
+
+    agents.cli.run_app(agents.WorkerOptions(**worker_kwargs))
