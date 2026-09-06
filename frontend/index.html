@@ -4,413 +4,577 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
     <title>J.A.R.V.I.S</title>
-    <link rel="stylesheet" href="style.css" />
-    <!-- Section 5: Markdown rendering for JARVIS responses (headings,
-         bold/italic, lists, tables, code blocks with syntax
-         highlighting) + DOMPurify to sanitize the rendered HTML before
-         it's ever inserted into the DOM. Loaded from cdnjs per this
-         environment's allowed script sources; app.js degrades to plain
-         text if either fails to load (see renderMarkdown()). -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600&family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=verify1" />
+    <link rel="stylesheet" href="animations.css?v=verify1" />
+    <link rel="stylesheet" href="cinematic.css?v=verify1" />
+    <link rel="stylesheet" href="ref.css?v=verify1" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.5/purify.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
 </head>
-<body>
+<body class="scene-idle">
 
-<!-- ── SCANLINE OVERLAY ─────────────────────────────────── -->
+<div class="env-bg" aria-hidden="true"></div>
+<div class="env-night" aria-hidden="true"></div>
+<div class="env-dim" aria-hidden="true"></div>
+<div class="env-floor" aria-hidden="true"></div>
 <div class="scanlines"></div>
-
-<!-- ── PARTICLE FIELD ──────────────────────────────────── -->
 <canvas id="particle-canvas"></canvas>
+<svg id="light-trail" class="light-trail" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+    <path id="light-trail-path" class="light-trail-path" d="M50 50 L50 50" fill="none"/>
+    <circle id="light-trail-bead" class="light-trail-bead" r="0.55" cx="50" cy="50"/>
+</svg>
+<div id="fx-overlay" class="fx-overlay" aria-hidden="true">
+    <div class="fx-burst" id="fx-burst"></div>
+    <div class="fx-success" id="fx-success"><span class="fx-check">✓</span></div>
+    <div class="fx-error" id="fx-error"><span class="fx-warn">⚠</span></div>
+</div>
 
 <div class="jarvis-shell">
 
-<!-- ── TOP HEADER ───────────────────────────────────────── -->
 <header class="app-header">
     <div class="header-brand">
-        <div class="brand-title">J.A.R.V.I.S<span class="brand-dot">.</span></div>
-        <div class="brand-subtitle">JUST A RATHER VERY INTELLIGENT SYSTEM</div>
+        <div class="brand-title">J.A.R.V.I.S</div>
     </div>
-    <div class="header-clock">
-        <div class="header-clock-time" id="clock-display">00:00:00</div>
-        <div class="header-clock-date" id="date-display">—</div>
+    <div class="header-clock" id="header-clock-chip">
+        <span class="header-clock-combined"><span id="date-display">—</span><span class="clock-sep"> | </span><span id="clock-display">00:00</span></span>
+        <span class="header-clock-orb" aria-hidden="true"></span>
     </div>
-    <div class="header-meta">
+    <div class="header-meta" hidden>
         <span class="header-session">SESSION <span id="session-id-display">—</span></span>
         <button class="proactive-toggle" id="proactive-toggle" type="button" title="Toggle proactive intelligence">
             <span class="proactive-toggle-dot" id="proactive-toggle-dot"></span>
             PROACTIVE
         </button>
-        <span class="status-dot" id="dot-backend"></span>
+        <span class="online-pill">
+            <span class="status-dot" id="dot-backend"></span>
+            <span id="header-online-label">ONLINE</span>
+        </span>
+        <span class="header-scene" id="scene-label" hidden>IDLE</span>
     </div>
 </header>
 
-<!-- Section 9: compact HUD-style proactive notifications — fixed,
-     floating, never covers the reactor/command bar/conversation. -->
 <div id="proactive-toast-stack" class="proactive-toast-stack"></div>
 
-<!-- ── MAIN LAYOUT ─────────────────────────────────────── -->
 <div class="jarvis-layout">
 
-    <!-- LEFT PANEL -->
-    <div class="panel panel-left">
-
-        <!-- System Overview -->
-        <div class="card" id="system-info">
-            <div class="card-header">
-                <span class="card-title">SYSTEM OVERVIEW</span>
-            </div>
-            <div class="info-grid">
-                <div class="info-row">
-                    <span class="ov-icon">◈</span>
-                    <span class="info-label">BACKEND</span>
-                    <span class="info-value" id="status-backend">INITIALISING</span>
-                </div>
-                <div class="info-row">
-                    <span class="ov-icon">◇</span>
-                    <span class="info-label">AGENT</span>
-                    <span class="info-value" id="status-agent">INITIALISING</span>
-                </div>
-                <div class="info-row">
-                    <span class="ov-icon">◆</span>
-                    <span class="info-label">LIVEKIT</span>
-                    <span class="info-value" id="status-livekit">INITIALISING</span>
-                </div>
-                <div class="info-row">
-                    <span class="ov-icon">◉</span>
-                    <span class="info-label">OLLAMA</span>
-                    <span class="info-value" id="status-gemini">INITIALISING</span>
-                </div>
-                <div class="info-row">
-                    <span class="ov-icon">◎</span>
-                    <span class="info-label">WEBSOCKET</span>
-                    <span class="info-value" id="status-ws">CONNECTING</span>
-                </div>
-                <div class="info-row">
-                    <span class="ov-icon">▣</span>
-                    <span class="info-label">AGENT PID</span>
-                    <span class="info-value" id="status-pid">—</span>
-                </div>
+    <!-- LEFT — System · Health · Events (reference) -->
+    <aside class="panel panel-left panel-ref">
+        <div class="glass-panel hud-frame ref-card" id="system-info">
+            <div class="panel-head"><span class="panel-title">System Overview</span></div>
+            <div class="info-grid ref-status-grid">
+                <div class="info-row"><span class="info-label">Backend</span><span class="info-value" id="status-backend">INITIALISING</span></div>
+                <div class="info-row"><span class="info-label">Agent</span><span class="info-value" id="status-agent">INITIALISING</span></div>
+                <div class="info-row"><span class="info-label">Livekit</span><span class="info-value" id="status-livekit">INITIALISING</span></div>
+                <div class="info-row"><span class="info-label">Ollama</span><span class="info-value" id="status-gemini">INITIALISING</span></div>
+                <div class="info-row"><span class="info-label">Websocket</span><span class="info-value" id="status-ws">CONNECTING</span></div>
+                <div class="info-row" hidden><span class="info-label">Agent PID</span><span class="info-value" id="status-pid">—</span></div>
             </div>
         </div>
 
-        <!-- Core Modules -->
-        <div class="card" id="core-modules-card">
-            <div class="card-header">
-                <span class="card-title">CORE MODULES</span>
+        <div class="glass-panel hud-frame ref-card" id="system-health">
+            <div class="panel-head"><span class="panel-title">System Health</span></div>
+            <div class="ref-health-list">
+                <div class="ref-health-row" style="--p:42%"><span class="ref-h-ico" aria-hidden="true">▣</span><span class="ref-h-label">CPU</span><div class="ref-h-bar"><i></i></div><b id="health-cpu">42%</b></div>
+                <div class="ref-health-row" style="--p:68%"><span class="ref-h-ico" aria-hidden="true">▤</span><span class="ref-h-label">RAM</span><div class="ref-h-bar"><i></i></div><b id="health-ram">68%</b></div>
+                <div class="ref-health-row" style="--p:35%"><span class="ref-h-ico" aria-hidden="true">▦</span><span class="ref-h-label">Disk</span><div class="ref-h-bar"><i></i></div><b id="health-disk">35%</b></div>
+                <div class="ref-health-row" style="--p:55%"><span class="ref-h-ico" aria-hidden="true">◉</span><span class="ref-h-label">Temp</span><div class="ref-h-bar"><i></i></div><b id="health-temp">42°C</b></div>
+                <div class="ref-health-row" style="--p:87%"><span class="ref-h-ico" aria-hidden="true">⚡</span><span class="ref-h-label">Power</span><div class="ref-h-bar"><i></i></div><b id="health-power">87%</b></div>
+                <div class="ref-health-row" style="--p:54%"><span class="ref-h-ico" aria-hidden="true">🗄️</span><span class="ref-h-label">Storage</span><div class="ref-h-bar"><i></i></div><b id="health-storage">54%</b></div>
             </div>
-            <div class="module-list">
-                <div class="module-row" id="mod-conversational">
-                    <span class="mod-icon">🗨</span>
-                    <span class="mod-label">Conversational Agent</span>
-                    <span class="mod-dot"></span>
-                    <span class="mod-status-label">—</span>
-                </div>
-                <div class="module-row" id="mod-code">
-                    <span class="mod-icon">⌨</span>
-                    <span class="mod-label">Code Assistant</span>
-                    <span class="mod-dot"></span>
-                    <span class="mod-status-label">—</span>
-                </div>
-                <div class="module-row" id="mod-vision">
-                    <span class="mod-icon">◉</span>
-                    <span class="mod-label">Vision Analyzer</span>
-                    <span class="mod-dot"></span>
-                    <span class="mod-status-label">—</span>
-                </div>
-                <div class="module-row" id="mod-architect">
-                    <span class="mod-icon">⌂</span>
-                    <span class="mod-label">System Architect</span>
-                    <span class="mod-dot"></span>
-                    <span class="mod-status-label">—</span>
-                </div>
-                <div class="module-row" id="mod-files">
-                    <span class="mod-icon">▤</span>
-                    <span class="mod-label">File Manager</span>
-                    <span class="mod-dot"></span>
-                    <span class="mod-status-label">—</span>
-                </div>
-            </div>
+            <span id="health-status" hidden>HEALTHY</span>
+            <span id="health-clock" hidden></span>
+            <span id="health-date" hidden></span>
         </div>
 
-        <!-- Memory Stats -->
-        <div class="card" id="memory-stats">
-            <div class="card-header">
-                <span class="card-title">MEMORY CORE</span>
-            </div>
-            <div class="info-grid">
-                <div class="info-row">
-                    <span class="ov-icon">Σ</span>
-                    <span class="info-label">TOTAL MSG</span>
-                    <span class="info-value" id="stat-total">0</span>
-                </div>
-                <div class="info-row">
-                    <span class="ov-icon">⌘</span>
-                    <span class="info-label">SESSIONS</span>
-                    <span class="info-value" id="stat-sessions">0</span>
-                </div>
-                <div class="info-row">
-                    <span class="ov-icon">◔</span>
-                    <span class="info-label">TODAY</span>
-                    <span class="info-value" id="stat-today">0</span>
-                </div>
-            </div>
+        <div class="glass-panel hud-frame ref-card ref-card-grow" id="events-panel">
+            <div class="panel-head"><span class="panel-title">Events</span></div>
+            <div class="log-list ref-events" id="events-list"></div>
         </div>
 
-        <!-- Agent Controls -->
-        <div class="card" id="agent-controls">
-            <div class="card-header">
-                <span class="card-title">AGENT CONTROL</span>
-            </div>
-            <div class="btn-group">
-                <button class="hud-btn" onclick="restartAgent()">
-                    <span class="btn-icon">↺</span> RESTART
-                </button>
-                <button class="hud-btn hud-btn-danger" onclick="stopAgent()">
-                    <span class="btn-icon">■</span> STOP
-                </button>
-                <button class="hud-btn hud-btn-success" onclick="startAgent()">
-                    <span class="btn-icon">▶</span> START
-                </button>
-            </div>
+        <!-- Secondary tools (not in reference hero; keep for functionality) -->
+        <div class="ref-tool-row">
+            <button type="button" class="ref-tool" data-open-popup="core-modules" title="Modules">◈</button>
+            <button type="button" class="ref-tool" data-open-popup="memory-core" title="Memory">▣</button>
+            <button type="button" class="ref-tool" data-open-popup="agent-control" title="Agent">⚙</button>
+            <button type="button" class="ref-tool" data-open-popup="quick-commands" title="Quick">⌘</button>
         </div>
+    </aside>
 
-        <!-- System Events Log -->
-        <div class="card card-grow" id="events-panel">
-            <div class="card-header">
-                <span class="card-title">SYSTEM LOG</span>
-                <span class="blink-dot"></span>
-            </div>
-            <div class="log-list" id="events-list"></div>
-        </div>
-
-    </div>
-
-    <!-- CENTER PANEL: JARVIS HUD -->
-    <div class="panel panel-center">
-
-        <!-- HUD Rings -->
-        <div class="hud-wrapper">
-            <div class="hud-ring ring-outer">
-                <div class="ring-tick-container" id="tick-outer"></div>
-            </div>
-            <div class="hud-ring ring-tickmarks"></div>
-            <div class="hud-ring ring-mid">
-                <div class="ring-tick-container" id="tick-mid"></div>
-            </div>
-            <div class="hud-ring ring-inner"></div>
-            <div class="hud-ring ring-glow"></div>
-
-            <!-- Arc segments -->
-            <svg class="hud-svg" viewBox="0 0 400 400">
-                <circle class="arc-track" cx="200" cy="200" r="155"/>
-                <circle class="arc-progress" cx="200" cy="200" r="155" id="arc-progress"/>
-                <circle class="arc-track" cx="200" cy="200" r="120"/>
-                <circle class="arc-progress arc-progress-2" cx="200" cy="200" r="120" id="arc-progress-2"/>
-                <!-- Radial waveform: audio-reactive spikes drawn on r=90,
-                     between the arc rings and the voice button. Filled
-                     in each frame by drawRadialWaveform() in app.js. -->
-                <polygon class="radial-waveform" id="radial-waveform" points=""/>
+    <!-- CENTER -->
+    <main class="panel panel-center">
+        <div id="scene-stage" class="scene-stage is-idle">
+            <svg class="holo-construct" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                <path class="holo-travel-line" d="M50 50 L8 8 L92 8 L92 92 L8 92 L8 8 L92 92"/>
+                <g class="holo-scaffold">
+                    <line class="holo-line" x1="8" y1="8" x2="92" y2="8"/>
+                    <line class="holo-line" x1="92" y1="8" x2="92" y2="92"/>
+                    <line class="holo-line" x1="92" y1="92" x2="8" y2="92"/>
+                    <line class="holo-line" x1="8" y1="92" x2="8" y2="8"/>
+                </g>
             </svg>
-
-            <!-- Center content -->
-            <div class="hud-center">
-                <!-- Voice button -->
-                <button class="voice-btn" id="voice-btn" onclick="toggleVoice()">
-                    <div class="voice-btn-ring"></div>
-                    <div class="voice-btn-ring voice-btn-ring-2"></div>
-                    <svg class="mic-icon" viewBox="0 0 24 24" fill="none"
-                         stroke="currentColor" stroke-width="2">
-                        <rect x="9" y="2" width="6" height="11" rx="3"/>
-                        <path d="M5 10a7 7 0 0 0 14 0"/>
-                        <line x1="12" y1="19" x2="12" y2="22"/>
-                        <line x1="8"  y1="22" x2="16" y2="22"/>
-                    </svg>
-                    <span class="voice-label" id="voice-label">ACTIVATE</span>
-
-                    <!-- Mic indicator: a child of voice-btn (not hud-center)
-                         so its "top: 100%+Npx" offset is anchored to the
-                         button's own bottom edge, same as voice-label just
-                         above — a sibling in hud-center would instead
-                         measure against hud-center's total stacked height,
-                         which happened to look right by coincidence but
-                         breaks the moment hud-center's other children
-                         change size. -->
-                    <div class="mic-indicator" id="mic-indicator">
-                        <div class="mic-bar" style="--i:0"></div>
-                        <div class="mic-bar" style="--i:1"></div>
-                        <div class="mic-bar" style="--i:2"></div>
-                        <div class="mic-bar" style="--i:3"></div>
-                        <div class="mic-bar" style="--i:4"></div>
-                        <div class="mic-bar" style="--i:5"></div>
-                        <div class="mic-bar" style="--i:6"></div>
-                    </div>
-                </button>
+            <div class="holo-anchors" aria-hidden="true">
+                <span class="holo-anchor" style="--i:0"></span>
+                <span class="holo-anchor" style="--i:1"></span>
+                <span class="holo-anchor" style="--i:2"></span>
+                <span class="holo-anchor" style="--i:3"></span>
             </div>
+            <div class="align-guides" aria-hidden="true"><span class="guide guide-h"></span><span class="guide guide-v"></span></div>
+            <div class="scan-sweep" aria-hidden="true"></div>
 
-            <!-- Corner decorations -->
-            <div class="corner corner-tl"></div>
-            <div class="corner corner-tr"></div>
-            <div class="corner corner-bl"></div>
-            <div class="corner corner-br"></div>
-        </div>
-
-        <!-- Reactor status readout -->
-        <div class="reactor-meta">
-            <div class="reactor-meta-item">
-                <span class="meta-label">VOICE STATUS</span>
-                <span class="meta-value" id="voice-status-value">IDLE</span>
-            </div>
-            <div class="reactor-meta-item align-right">
-                <span class="meta-label">ACTIVE MODE</span>
-                <span class="meta-value" id="active-mode-value">ASSISTANT</span>
-            </div>
-        </div>
-
-        <!-- AI Response Panel -->
-        <div class="response-panel" id="response-panel">
-            <div class="response-header">
-                <span class="response-label">JARVIS RESPONSE</span>
-                <span class="response-status" id="response-status">STANDBY</span>
-            </div>
-            <!-- Live step-by-step progress for multi-step backend work
-                 (debug investigations, code analysis) — driven by real
-                 "backend_state" WebSocket messages from state.py, not a
-                 fake animation. Hidden whenever there's nothing to show. -->
-            <div class="response-progress" id="response-progress" style="display:none;"></div>
-            <div class="response-text" id="response-text">
-                Awaiting your command, Sir.
-            </div>
-        </div>
-
-        <!-- Text Input -->
-        <div class="input-row">
-            <!-- Native file input stays invisible; the upload button
-                 below just proxies clicks to it (see FILE UPLOAD block
-                 in app.js). -->
-            <input
-                type="file"
-                id="file-input"
-                class="file-input-hidden"
-                accept=".py,.js,.ts,.tsx,.jsx,.json,.txt,.md,.c,.cpp,.h,.hpp,.java,.html,.css,.yml,.yaml,.log,.jpg,.jpeg,.png,.webp,.pdf,.docx"
-                onchange="handleFileSelect(event)"
-                tabindex="-1"
-            />
-            <button
-                class="upload-btn"
-                type="button"
-                onclick="triggerFileSelect()"
-                title="Upload file"
-                aria-label="Upload file"
-            >
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
-                </svg>
-            </button>
-
-            <div class="input-wrapper">
-                <!-- Attachment chip: hidden until a file is selected.
-                     Positioned as an overlay above the input (see
-                     .file-chip in style.css) so it never pushes the
-                     rest of the fixed-height layout around. -->
-                <div class="file-chip" id="file-chip" style="display:none;">
-                    <img class="file-chip-thumb" id="file-chip-thumb" alt="" style="display:none;" />
-                    <span class="file-chip-icon" id="file-chip-icon">📎</span>
-                    <span class="file-chip-name" id="file-chip-name"></span>
-                    <span class="file-chip-status" id="file-chip-status"></span>
-                    <button
-                        class="file-chip-remove"
-                        id="file-chip-remove"
-                        type="button"
-                        onclick="clearSelectedFile()"
-                        title="Remove file"
-                        aria-label="Remove file"
-                    >×</button>
+            <!-- HERO cinematic stage — 50–80% center viewport -->
+            <div id="cinematic-layer" class="cinematic-layer" aria-hidden="true">
+                <div class="cin-ambient" id="cin-ambient">
+                    <span class="cin-pillar p1"></span>
+                    <span class="cin-pillar p2"></span>
+                    <span class="cin-pillar p3"></span>
+                    <span class="cin-pillar p4"></span>
+                    <span class="cin-pillar p5"></span>
+                    <span class="cin-floor-line"></span>
                 </div>
-                <input
-                    type="text"
-                    id="chat-input"
-                    class="chat-input"
-                    placeholder="Type a command or ask anything..."
-                    onkeydown="handleKey(event)"
-                    autocomplete="off"
-                />
-            </div>
-            <!-- Shortcut mic button — calls the exact same toggleVoice()
-                 handler as the reactor's own voice button; not a second
-                 voice pipeline. -->
-            <button class="mic-shortcut-btn" type="button" onclick="toggleVoice()" title="Voice command" aria-label="Voice command">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="9" y="2" width="6" height="11" rx="3"/>
-                    <path d="M5 10a7 7 0 0 0 14 0"/>
-                    <line x1="12" y1="19" x2="12" y2="22"/>
-                    <line x1="8"  y1="22" x2="16" y2="22"/>
+                <div class="cin-data-rain" id="cin-data-rain"></div>
+
+                <div class="cin-boot" id="cin-boot">
+                    <div class="cin-boot-point"></div>
+                    <div class="cin-boot-sphere"></div>
+                    <div class="cin-boot-beam"></div>
+                    <div class="cin-boot-ring r1"></div>
+                    <div class="cin-boot-ring r2"></div>
+                    <div class="cin-boot-ring r3"></div>
+                    <div class="cin-boot-ring r4"></div>
+                    <div class="cin-boot-ring r5"></div>
+                    <div class="cin-boot-geo"></div>
+                    <div class="cin-boot-geo g2"></div>
+                    <div class="cin-boot-sparks"></div>
+                    <div class="cin-boot-title">J.A.R.V.I.S</div>
+                    <div class="cin-boot-sub">SYSTEM READY</div>
+                </div>
+
+                <div class="cin-hero-ring" id="cin-hero-ring">
+                    <span class="cin-hr outer"></span>
+                    <span class="cin-hr mid"></span>
+                    <span class="cin-hr inner"></span>
+                    <span class="cin-hr markers"></span>
+                    <span class="cin-hr sweep"></span>
+                    <span class="cin-hr glow"></span>
+                </div>
+
+                <div class="cin-voice-activate" id="cin-voice-activate">
+                    <span class="cin-va-pulse"></span>
+                    <span class="cin-va-ring a"></span>
+                    <span class="cin-va-ring b"></span>
+                    <span class="cin-va-ring c"></span>
+                    <span class="cin-va-sweep"></span>
+                    <span class="cin-va-sparks"></span>
+                </div>
+
+                <svg class="cin-energy-flow" id="cin-energy-flow" viewBox="0 0 1000 600" preserveAspectRatio="none">
+                    <defs>
+                        <linearGradient id="cin-flow-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+                            <stop offset="0%" stop-color="#FFB000" stop-opacity="0"/>
+                            <stop offset="40%" stop-color="#FFB000" stop-opacity="0.95"/>
+                            <stop offset="100%" stop-color="#E6A52F" stop-opacity="0"/>
+                        </linearGradient>
+                    </defs>
+                    <path class="cin-flow f1" d="M40 300 C220 180, 380 220, 500 300 S780 420, 960 280"/>
+                    <path class="cin-flow f2" d="M60 340 C240 420, 360 380, 500 300 S740 180, 940 320"/>
+                    <path class="cin-flow f3" d="M80 260 C260 140, 400 260, 500 300 S720 360, 920 240"/>
+                    <path class="cin-flow f4" d="M50 380 C280 300, 420 340, 500 300 S700 260, 950 360"/>
+                    <path class="cin-flow f5" d="M70 220 C300 280, 390 200, 500 300 S760 400, 930 260"/>
                 </svg>
-            </button>
-            <button class="send-btn" onclick="sendMessage()">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <line x1="22" y1="2" x2="11" y2="13"/>
-                    <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-                </svg>
-            </button>
+
+                <div class="cin-speak-field" id="cin-speak-field">
+                    <span class="cin-speak-wave w1"></span>
+                    <span class="cin-speak-wave w2"></span>
+                    <span class="cin-speak-wave w3"></span>
+                    <span class="cin-speak-wave w4"></span>
+                    <span class="cin-speak-wave w5"></span>
+                </div>
+
+                <svg class="cin-neural-field" id="cin-neural-field" viewBox="0 0 900 560" preserveAspectRatio="xMidYMid meet"></svg>
+
+                <div class="cin-data-wall" id="cin-data-wall"></div>
+
+                <div class="cin-scan-field" id="cin-scan-field">
+                    <div class="cin-scan-frame">
+                        <span class="cin-bracket tl"></span>
+                        <span class="cin-bracket tr"></span>
+                        <span class="cin-bracket bl"></span>
+                        <span class="cin-bracket br"></span>
+                        <div class="cin-scan-doc">
+                            <div class="cin-scan-lines"></div>
+                            <div class="cin-scan-plane"></div>
+                            <div class="cin-scan-points"></div>
+                        </div>
+                        <div class="cin-scan-label">FILE ANALYSIS</div>
+                    </div>
+                </div>
+
+                <div class="cin-exec-graph" id="cin-exec-graph">
+                    <div class="cin-exec-pipeline">
+                        <div class="cin-exec-step" data-step="0"><b></b><span>INITIALIZE</span></div>
+                        <div class="cin-exec-link"></div>
+                        <div class="cin-exec-step" data-step="1"><b></b><span>EXECUTE</span></div>
+                        <div class="cin-exec-link"></div>
+                        <div class="cin-exec-step" data-step="2"><b></b><span>VERIFY</span></div>
+                        <div class="cin-exec-link"></div>
+                        <div class="cin-exec-step" data-step="3"><b></b><span>COMPLETE</span></div>
+                    </div>
+                    <div class="cin-exec-label">SYSTEM OPERATION</div>
+                </div>
+
+                <div class="cin-decision-field" id="cin-decision-field">
+                    <div class="cin-decision-pulse"></div>
+                    <div class="cin-decision-warn">⚠</div>
+                    <div class="cin-decision-copy">ACTION REQUIRED</div>
+                </div>
+
+                <div class="cin-success-burst" id="cin-success-burst">
+                    <span class="cin-ok-ring"></span>
+                    <span class="cin-ok-mark">✓</span>
+                </div>
+                <div class="cin-error-collapse" id="cin-error-collapse">
+                    <div class="cin-error-fracture"></div>
+                    <div class="cin-error-tri">⚠</div>
+                </div>
+
+                <div class="cin-dissolve" id="cin-dissolve">
+                    <span></span><span></span><span></span><span></span><span></span>
+                    <span></span><span></span><span></span><span></span><span></span>
+                </div>
+            </div>
+
+            <div class="idle-field" id="idle-field">
+                <div class="idle-core">
+                    <div class="core-banner" hidden>J.A.R.V.I.S. · SYSTEM READY</div>
+                    <div class="reactor-row">
+                        <div class="reactor-beam" aria-hidden="true"></div>
+                        <div class="hud-wrapper core-state-ready" id="hud-wrapper" data-core-state="READY">
+                            <div class="floor-glow" aria-hidden="true"></div>
+                            <div class="floor-rings" aria-hidden="true"><span></span><span></span><span></span></div>
+                            <div class="hud-ring ring-outer"><div class="ring-tick-container" id="tick-outer"></div></div>
+                            <div class="hud-ring ring-tickmarks"></div>
+                            <div class="hud-ring ring-mid"><div class="ring-tick-container" id="tick-mid"></div></div>
+                            <div class="hud-ring ring-inner"></div>
+                            <div class="hud-ring ring-glow"></div>
+                            <div class="core-exec-fx" aria-hidden="true">
+                                <span class="core-exec-bloom"></span>
+                                <span class="core-exec-orbit o1"></span>
+                                <span class="core-exec-orbit o2"></span>
+                                <span class="core-exec-sweep"></span>
+                                <span class="core-exec-tick"></span>
+                                <span class="core-exec-tick t2"></span>
+                            </div>
+                            <div class="core-verify-fx" aria-hidden="true">
+                                <span class="core-verify-bloom"></span>
+                                <span class="core-verify-ring"></span>
+                                <span class="core-verify-ring r2"></span>
+                                <span class="core-verify-scan"></span>
+                                <span class="core-verify-scan s2"></span>
+                                <span class="core-verify-check"></span>
+                            </div>
+                            <div class="core-scan-arc" aria-hidden="true"></div>
+                            <div class="speak-waves" aria-hidden="true">
+                                <span class="speak-wave speak-wave-1"></span>
+                                <span class="speak-wave speak-wave-2"></span>
+                                <span class="speak-wave speak-wave-3"></span>
+                                <span class="speak-wave speak-wave-4"></span>
+                                <span class="speak-wave speak-wave-red"></span>
+                            </div>
+                            <div class="core-energy-pulse" aria-hidden="true"></div>
+                            <div class="core-energy-pulse core-energy-pulse-2" aria-hidden="true"></div>
+                            <div class="core-energy-pulse core-energy-pulse-3" aria-hidden="true"></div>
+                            <svg class="hud-svg" viewBox="0 0 400 400" aria-hidden="true">
+                                <circle class="arc-track" cx="200" cy="200" r="155"/>
+                                <circle class="arc-progress" cx="200" cy="200" r="155" id="arc-progress"/>
+                                <circle class="arc-track" cx="200" cy="200" r="120"/>
+                                <circle class="arc-progress arc-progress-2" cx="200" cy="200" r="120" id="arc-progress-2"/>
+                                <g class="speak-arc-group" fill="none" stroke-linecap="round">
+                                    <circle class="speak-arc speak-arc-g1" cx="200" cy="200" r="95" stroke="#ffb400" stroke-width="2" stroke-dasharray="90 508"/>
+                                    <circle class="speak-arc speak-arc-g2" cx="200" cy="200" r="115" stroke="#ffc94a" stroke-width="1.8" stroke-dasharray="70 652"/>
+                                    <circle class="speak-arc speak-arc-g3" cx="200" cy="200" r="135" stroke="#e8a317" stroke-width="1.6" stroke-dasharray="55 793"/>
+                                    <circle class="speak-arc speak-arc-r1" cx="200" cy="200" r="78" stroke="#c62828" stroke-width="2.4" stroke-dasharray="50 440"/>
+                                    <circle class="speak-arc speak-arc-r2" cx="200" cy="200" r="88" stroke="#ff4d4d" stroke-width="1.8" stroke-dasharray="36 517"/>
+                                </g>
+                                <circle class="arc-red arc-red-1" cx="200" cy="200" r="155"
+                                    fill="none" stroke="#c62828" stroke-width="2.5"
+                                    stroke-linecap="round" stroke-dasharray="42 930"
+                                    transform="rotate(-25 200 200)"/>
+                                <circle class="arc-red arc-red-2" cx="200" cy="200" r="155"
+                                    fill="none" stroke="#ff4d4d" stroke-width="2"
+                                    stroke-linecap="round" stroke-dasharray="28 944"
+                                    transform="rotate(110 200 200)"/>
+                                <circle class="arc-red arc-red-3" cx="200" cy="200" r="120"
+                                    fill="none" stroke="#b33a3a" stroke-width="2"
+                                    stroke-linecap="round" stroke-dasharray="36 720"
+                                    transform="rotate(200 200 200)"/>
+                                <polygon class="radial-waveform" id="radial-waveform" points=""/>
+                                <polygon class="core-triangle" points="200,228 176,178 224,178" fill="#ffb400"/>
+                            </svg>
+                            <div class="voice-red-glow" aria-hidden="true"></div>
+                            <svg class="neural-net" id="neural-net" viewBox="0 0 400 400" aria-hidden="true">
+                                <g class="neural-links" stroke="rgba(255,180,0,0.55)" stroke-width="1" fill="none">
+                                    <path class="n-link" d="M200 200 L140 120"/><path class="n-link" d="M200 200 L260 110"/>
+                                    <path class="n-link" d="M200 200 L120 200"/><path class="n-link" d="M200 200 L280 210"/>
+                                    <path class="n-link" d="M200 200 L150 280"/><path class="n-link" d="M200 200 L255 290"/>
+                                    <path class="n-link" d="M140 120 L100 90"/><path class="n-link" d="M260 110 L310 80"/>
+                                    <path class="n-link" d="M120 200 L70 180"/><path class="n-link" d="M280 210 L340 230"/>
+                                    <path class="n-link" d="M150 280 L110 330"/><path class="n-link" d="M255 290 L300 340"/>
+                                </g>
+                                <g class="neural-nodes" fill="#ffb400">
+                                    <circle class="n-node" cx="200" cy="200" r="4"/>
+                                    <circle class="n-node" cx="140" cy="120" r="3"/><circle class="n-node" cx="260" cy="110" r="3"/>
+                                    <circle class="n-node" cx="120" cy="200" r="3"/><circle class="n-node" cx="280" cy="210" r="3"/>
+                                    <circle class="n-node" cx="150" cy="280" r="3"/><circle class="n-node" cx="255" cy="290" r="3"/>
+                                    <circle class="n-node" cx="100" cy="90" r="2.5"/><circle class="n-node" cx="310" cy="80" r="2.5"/>
+                                    <circle class="n-node" cx="70" cy="180" r="2.5"/><circle class="n-node" cx="340" cy="230" r="2.5"/>
+                                    <circle class="n-node" cx="110" cy="330" r="2.5"/><circle class="n-node" cx="300" cy="340" r="2.5"/>
+                                </g>
+                                <circle class="neural-packet" r="2.5" fill="#ffd56a">
+                                    <animateMotion dur="1.8s" repeatCount="indefinite" path="M200 200 L260 110 L310 80"/>
+                                </circle>
+                                <circle class="neural-packet" r="2" fill="#ffb400">
+                                    <animateMotion dur="2.2s" begin="0.4s" repeatCount="indefinite" path="M200 200 L150 280 L110 330"/>
+                                </circle>
+                                <circle class="neural-packet" r="2" fill="#ffe09a">
+                                    <animateMotion dur="1.6s" begin="0.8s" repeatCount="indefinite" path="M200 200 L120 200 L70 180"/>
+                                </circle>
+                            </svg>
+                            <div class="hud-center">
+                                <button class="voice-btn" id="voice-btn" type="button" onclick="toggleVoice()" title="Activate voice" aria-label="Toggle voice">
+                                    <div class="voice-btn-ring"></div>
+                                    <div class="voice-btn-ring voice-btn-ring-2"></div>
+                                    <div class="voice-btn-ring voice-btn-ring-red"></div>
+                                    <div class="voice-activate-flash" aria-hidden="true"></div>
+                                    <span class="voice-red-dot" aria-hidden="true"></span>
+                                    <svg class="mic-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+                                        <rect x="9" y="2" width="6" height="11" rx="3"/>
+                                        <path d="M5 10a7 7 0 0 0 14 0"/>
+                                        <line x1="12" y1="19" x2="12" y2="22"/>
+                                        <line x1="8" y1="22" x2="16" y2="22"/>
+                                    </svg>
+                                    <span class="voice-label" id="voice-label">READY</span>
+                                    <div class="mic-indicator" id="mic-indicator">
+                                        <div class="mic-bar" style="--i:0"></div>
+                                        <div class="mic-bar" style="--i:1"></div>
+                                        <div class="mic-bar" style="--i:2"></div>
+                                        <div class="mic-bar" style="--i:3"></div>
+                                        <div class="mic-bar" style="--i:4"></div>
+                                        <div class="mic-bar" style="--i:5"></div>
+                                        <div class="mic-bar" style="--i:6"></div>
+                                    </div>
+                                </button>
+                            </div>
+                            <div class="corner corner-tl"></div>
+                            <div class="corner corner-tr"></div>
+                            <div class="corner corner-bl"></div>
+                            <div class="corner corner-br"></div>
+                        </div>
+
+                        <ul class="state-ladder glass-panel hud-frame" id="state-ladder" aria-label="Voice states" hidden>
+                            <li data-state="READY" class="on" tabindex="0">IDLE</li>
+                            <li data-state="LISTENING" tabindex="0">LISTENING</li>
+                            <li data-state="THINKING" tabindex="0">THINKING</li>
+                            <li data-state="EXECUTING" tabindex="0">EXECUTING</li>
+                            <li data-state="VERIFYING" tabindex="0">VERIFYING</li>
+                            <li data-state="SPEAKING" tabindex="0">SPEAKING</li>
+                            <li data-state="ERROR" hidden>ERROR</li>
+                        </ul>
+                    </div>
+
+                    <button class="core-prompt" type="button" onclick="toggleVoice()" title="Tap to speak" hidden>
+                        TAP TO SPEAK
+                        <span class="core-prompt-sub">OR SAY “HEY JARVIS”</span>
+                    </button>
+                    <!-- keep IDs for app.js -->
+                    <span id="voice-status-value" hidden>READY</span>
+                    <span id="active-mode-value" hidden>ASSISTANT</span>
+                </div>
+
+                <!-- hidden telemetry chips still updated by JS -->
+                <span id="idle-link-status" hidden></span>
+                <span id="idle-voice-chip" hidden></span>
+                <span id="idle-mode-chip" hidden></span>
+            </div>
+
+            <div id="scene-content" class="scene-content">
+                <section class="scene-layer" data-scene="VOICE" id="scene-voice" hidden></section>
+                <section class="scene-layer" data-scene="RESPONSE" id="scene-response" hidden>
+                    <div class="holo-surface holo-surface-wide glass-panel">
+                        <div class="response-panel" id="response-panel">
+                            <div class="response-header">
+                                <span class="response-label">RESPONSE PLANE</span>
+                                <span class="response-status" id="response-status">STANDBY</span>
+                            </div>
+                            <div class="response-progress" id="response-progress" style="display:none;"></div>
+                            <div class="response-text holo-content" id="response-text">Awaiting your command, Sir.</div>
+                        </div>
+                    </div>
+                </section>
+                <section class="scene-layer" data-scene="FILES" id="scene-files" hidden>
+                    <div class="holo-surface glass-panel hud-frame">
+                        <div class="scene-annotation">DOCUMENT ANALYSIS</div>
+                        <div class="files-preview">
+                            <div class="files-scan-frame" id="files-scan-frame">
+                                <div class="files-scan-line" aria-hidden="true"></div>
+                                <div class="files-doc-icon" aria-hidden="true"></div>
+                                <img class="files-thumb" id="scene-files-thumb" alt="" hidden />
+                                <div class="files-meta">
+                                    <div class="files-name" id="scene-files-name">—</div>
+                                    <div class="files-status" id="scene-files-status">STANDBY</div>
+                                </div>
+                                <svg class="files-progress-ring" viewBox="0 0 80 80" aria-hidden="true">
+                                    <circle cx="40" cy="40" r="34" class="files-ring-track"/>
+                                    <circle cx="40" cy="40" r="34" class="files-ring-progress" id="files-ring-progress"/>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                <section class="scene-layer" data-scene="SYSTEM_ACTION" id="scene-system" hidden>
+                    <div class="holo-surface glass-panel hud-frame">
+                        <div class="scene-annotation">EXECUTION INTERFACE</div>
+                        <div class="system-pipeline" id="system-pipeline" aria-hidden="true">
+                            <div class="sys-step" data-step="init">INITIALIZE</div>
+                            <div class="sys-pipe"></div>
+                            <div class="sys-step" data-step="exec">EXECUTE</div>
+                            <div class="sys-pipe"></div>
+                            <div class="sys-step" data-step="verify">VERIFY</div>
+                            <div class="sys-pipe"></div>
+                            <div class="sys-step" data-step="done">COMPLETE</div>
+                        </div>
+                        <div class="system-steps" id="scene-system-steps"><div class="system-step-label">INITIALISING</div></div>
+                    </div>
+                </section>
+                <section class="scene-layer" data-scene="DECISION" id="scene-decision" hidden>
+                    <div class="holo-surface holo-surface-alert glass-panel hud-frame decision-surface">
+                        <div class="scene-annotation warn">⚠ ACTION REQUIRED</div>
+                        <div class="decision-body holo-content" id="scene-decision-body">Awaiting confirmation…</div>
+                    </div>
+                </section>
+                <section class="scene-layer" data-scene="PROJECT" id="scene-project" hidden><div class="holo-surface glass-panel"><div class="scene-annotation">PROJECT GRAPH</div></div></section>
+                <section class="scene-layer" data-scene="CALENDAR" id="scene-calendar" hidden><div class="holo-surface glass-panel"><div class="scene-annotation">SPATIAL TIMELINE</div></div></section>
+                <section class="scene-layer" data-scene="MEETING" id="scene-meeting" hidden><div class="holo-surface glass-panel"><div class="scene-annotation">MEETING WORKSPACE</div></div></section>
+            </div>
         </div>
 
-    </div>
-
-    <!-- RIGHT PANEL -->
-    <div class="panel panel-right">
-
-        <!-- Live Conversation -->
-        <div class="card card-grow" id="conversation-panel">
-            <div class="card-header">
-                <span class="card-title">LIVE CONVERSATION</span>
-                <span class="blink-dot"></span>
-            </div>
-            <div class="conversation-list" id="conversation-list"></div>
-        </div>
-
-        <!-- Quick Commands -->
-        <div class="card card-compact" id="quick-commands">
-            <div class="card-header">
-                <span class="card-title">QUICK COMMANDS</span>
-            </div>
-            <div class="quick-grid">
-                <button class="quick-btn" onclick="quickCmd('What is the weather in London?')">
-                    ⛅ WEATHER
+        <div class="stage-footer">
+            <div class="command-bar glass-bar">
+                <input type="file" id="file-input" class="file-input-hidden"
+                    accept=".py,.js,.ts,.tsx,.jsx,.json,.txt,.md,.c,.cpp,.h,.hpp,.java,.html,.css,.yml,.yaml,.log,.jpg,.jpeg,.png,.webp,.pdf,.docx"
+                    onchange="handleFileSelect(event)" tabindex="-1" />
+                <button class="upload-btn" type="button" onclick="triggerFileSelect()" title="Upload file" aria-label="Upload file">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/></svg>
                 </button>
-                <button class="quick-btn" onclick="quickCmd('Search the web for latest AI news')">
-                    🔍 SEARCH
-                </button>
-                <button class="quick-btn" onclick="quickCmd('What time is it?')">
-                    🕐 TIME
-                </button>
-                <button class="quick-btn" onclick="quickCmd('Tell me a joke, Jarvis')">
-                    😄 JOKE
-                </button>
-                <button class="quick-btn" onclick="quickCmd('What can you do?')">
-                    📋 HELP
-                </button>
-                <button class="quick-btn" onclick="clearConversation()">
-                    🗑 CLEAR
+                <div class="input-wrapper">
+                    <div class="file-chip" id="file-chip" style="display:none;">
+                        <img class="file-chip-thumb" id="file-chip-thumb" alt="" style="display:none;" />
+                        <span class="file-chip-icon" id="file-chip-icon">📎</span>
+                        <span class="file-chip-name" id="file-chip-name"></span>
+                        <span class="file-chip-status" id="file-chip-status"></span>
+                        <button class="file-chip-remove" id="file-chip-remove" type="button" onclick="clearSelectedFile()" title="Remove file" aria-label="Remove file">×</button>
+                    </div>
+                    <input type="text" id="chat-input" class="chat-input" placeholder="Type a command..." onkeydown="handleKey(event)" autocomplete="off" />
+                </div>
+                <button class="send-btn" type="button" onclick="sendMessage()" aria-label="Send">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
                 </button>
             </div>
         </div>
+    </main>
 
-        <!-- Waveform Visualiser -->
-        <div class="card card-compact" id="waveform-card">
-            <div class="card-header">
-                <span class="card-title">AUDIO WAVEFORM</span>
+    <!-- RIGHT — Chats · Audio -->
+    <aside class="panel panel-right panel-ref">
+        <div class="glass-panel glass-panel-grow hud-frame ref-card" id="conversation-panel">
+            <div class="panel-head">
+                <span class="panel-title">Chats</span>
+                <span class="conv-live">LIVE</span>
+            </div>
+            <div class="conversation-list" id="conversation-list">
+                <div class="conv-empty" id="conv-empty">
+                    <div class="conv-empty-frame">
+                        <div class="conv-empty-scan"></div>
+                        <div class="conv-empty-title">STANDBY</div>
+                        <div class="conv-empty-copy">Ask anything.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="glass-panel hud-frame ref-card" id="waveform-card">
+            <div class="panel-head">
+                <span class="panel-title">System Audio</span>
                 <span class="info-value" id="audio-status">IDLE</span>
             </div>
-            <canvas id="waveform-canvas" height="40"></canvas>
+            <canvas id="waveform-canvas" height="56"></canvas>
         </div>
+    </aside>
 
+</div>
+</div>
+
+<!-- HUD POPUPS — modules / memory / agent / quick -->
+<div class="hud-popup-layer" id="hud-popup-layer" hidden>
+    <div class="hud-popup-backdrop" id="hud-popup-backdrop"></div>
+
+    <div class="hud-popup glass-panel hud-frame" id="core-modules-card" data-popup="core-modules" role="dialog" aria-label="Core Modules" hidden>
+        <div class="panel-head">
+            <span class="panel-title">CORE MODULES</span>
+            <button type="button" class="popup-close" data-close-popup aria-label="Close">×</button>
+        </div>
+        <div class="module-list">
+            <div class="module-row" id="mod-conversational" tabindex="0" role="button"><span class="mod-label">Conversational Agent</span><span class="mod-dot"></span><span class="mod-status-label">—</span></div>
+            <div class="module-row" id="mod-code" tabindex="0" role="button"><span class="mod-label">Code Assistant</span><span class="mod-dot"></span><span class="mod-status-label">—</span></div>
+            <div class="module-row" id="mod-vision" tabindex="0" role="button"><span class="mod-label">Vision Analyzer</span><span class="mod-dot"></span><span class="mod-status-label">—</span></div>
+            <div class="module-row" id="mod-architect" tabindex="0" role="button"><span class="mod-label">System Architect</span><span class="mod-dot"></span><span class="mod-status-label">—</span></div>
+            <div class="module-row" id="mod-files" tabindex="0" role="button"><span class="mod-label">File Manager</span><span class="mod-dot"></span><span class="mod-status-label">—</span></div>
+        </div>
     </div>
 
-</div>
+    <div class="hud-popup glass-panel hud-frame" id="memory-stats" data-popup="memory-core" role="dialog" aria-label="Memory Core" hidden>
+        <div class="panel-head">
+            <span class="panel-title">MEMORY CORE</span>
+            <button type="button" class="popup-close" data-close-popup aria-label="Close">×</button>
+        </div>
+        <div class="info-grid">
+            <div class="info-row"><span class="info-label">TOTAL MSG</span><span class="info-value" id="stat-total">0</span></div>
+            <div class="info-row"><span class="info-label">SESSIONS</span><span class="info-value" id="stat-sessions">0</span></div>
+            <div class="info-row"><span class="info-label">TODAY</span><span class="info-value" id="stat-today">0</span></div>
+        </div>
+    </div>
+
+    <div class="hud-popup glass-panel hud-frame" id="agent-controls" data-popup="agent-control" role="dialog" aria-label="Agent Control" hidden>
+        <div class="panel-head">
+            <span class="panel-title">AGENT CONTROL</span>
+            <button type="button" class="popup-close" data-close-popup aria-label="Close">×</button>
+        </div>
+        <div class="btn-group">
+            <button class="hud-btn" type="button" onclick="restartAgent()">↺ RESTART</button>
+            <button class="hud-btn hud-btn-danger" type="button" onclick="stopAgent()">■ STOP</button>
+            <button class="hud-btn hud-btn-success" type="button" onclick="startAgent()">▶ START</button>
+        </div>
+    </div>
+
+    <div class="hud-popup glass-panel hud-frame" id="quick-commands" data-popup="quick-commands" role="dialog" aria-label="Quick Commands" hidden>
+        <div class="panel-head">
+            <span class="panel-title">QUICK COMMANDS</span>
+            <button type="button" class="popup-close" data-close-popup aria-label="Close">×</button>
+        </div>
+        <div class="quick-grid">
+            <button class="quick-btn" type="button" onclick="quickCmd('What is the weather in London?'); closeHudPopup();"><span>☁</span>WEATHER</button>
+            <button class="quick-btn" type="button" onclick="quickCmd('Search the web for latest AI news'); closeHudPopup();"><span>⌕</span>SEARCH</button>
+            <button class="quick-btn" type="button" onclick="quickCmd('What time is it?'); closeHudPopup();"><span>⏱</span>TIME</button>
+            <button class="quick-btn" type="button" onclick="quickCmd('Tell me a joke, Jarvis'); closeHudPopup();"><span>☺</span>JOKE</button>
+            <button class="quick-btn" type="button" onclick="quickCmd('What can you do?'); closeHudPopup();"><span>?</span>HELP</button>
+            <button class="quick-btn" type="button" onclick="clearConversation(); closeHudPopup();"><span>×</span>CLEAR</button>
+        </div>
+    </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=noparallax"></script>
 </body>
 </html>
