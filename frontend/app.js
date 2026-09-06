@@ -1237,23 +1237,15 @@ function handleWsMessage(data) {
                 addChatBubble("user", data.content, data.timestamp, null, data.attachment || null);
             } else if (data.role === "assistant") {
                 addChatBubble("assistant", data.content, data.timestamp);
-                // Update response panel for voice messages too
-                updateResponsePanel(data.content);
+                // Update response text, but NEVER leave VOICE while the
+                // mic session is live — RESPONSE dims the reactor to 15%
+                // (see style.css), which made thinking/speaking look like
+                // the UI was frozen on LISTENING after integration.
+                updateResponsePanel(data.content, { stayInVoice: voiceActive });
                 setResponseStatus("STANDBY");
-                SceneController.enter("RESPONSE");
-                // NOTE: this event fires when the TEXT transcript of
-                // JARVIS's reply arrives over the WebSocket — that only
-                // proves a response was GENERATED, not that TTS audio
-                // has started playing. Deliberately NOT touching
-                // jarvisSpeaking/setVoiceState here anymore. The actual
-                // "JARVIS SPEAKING" state is now driven solely by the
-                // real <audio> element's `playing`/`ended`/`error`
-                // events (see activateVoice()'s TrackSubscribed
-                // handler) — that was bug #4: the button used to flip to
-                // "JARVIS SPEAKING" here, based on text arrival, via a
-                // blind 3-second timeout that had no relationship to
-                // whether audio was actually playing or how long it
-                // actually took.
+                if (!voiceActive) {
+                    SceneController.enter("RESPONSE");
+                }
             }
             break;
 
@@ -1287,29 +1279,26 @@ function handleWsMessage(data) {
 
         case "voice_state":
             // Real agent-side state pushed from agent.py's
-            // agent_state_changed event via the backend. This is the
-            // FRAMEWORK'S OWN turn-scoped notion of speaking — accurate
-            // per-reply, unlike trying to infer it from the browser's
-            // local <audio> element (that track is one continuous
-            // connection-lifetime stream, so its `playing` event only
-            // fires once at connect time and never again — which is
-            // exactly why "JARVIS SPEAKING" appeared disconnected from
-            // any actual reply being spoken). This is now the primary
-            // driver for both "thinking" and "speaking".
+            // agent_state_changed event via the backend.
             if (!voiceActive) break;
-            if (data.state === "thinking") {
-                setVoiceState("THINKING");
-                SceneController.enter("VOICE", { state: "THINKING" });
-            } else if (data.state === "speaking") {
-                jarvisSpeaking = true;
-                setVoiceState("SPEAKING");
-                playChime("speakStart");
-                SceneController.enter("VOICE", { state: "SPEAKING" });
-            } else if (data.state === "listening") {
-                jarvisSpeaking = false;
-                setVoiceState("LISTENING");
-                playChime("listenStart");
-                SceneController.enter("VOICE", { state: "LISTENING" });
+            {
+                const raw = String(data.state || "").toLowerCase();
+                if (raw === "thinking") {
+                    setVoiceState("THINKING");
+                    SceneController.enter("VOICE", { state: "THINKING" });
+                } else if (raw === "speaking") {
+                    jarvisSpeaking = true;
+                    setVoiceState("SPEAKING");
+                    playChime("speakStart");
+                    SceneController.enter("VOICE", { state: "SPEAKING" });
+                } else if (raw === "listening" || raw === "idle") {
+                    // "idle" = agent ready/waiting — treat like listening
+                    // while the mic session is still open.
+                    jarvisSpeaking = false;
+                    setVoiceState("LISTENING");
+                    playChime("listenStart");
+                    SceneController.enter("VOICE", { state: "LISTENING" });
+                }
             }
             break;
 
@@ -1859,10 +1848,11 @@ function updateBackendProgress(data) {
     }
 }
 
-function updateResponsePanel(text) {
+function updateResponsePanel(text, opts = {}) {
     const el = document.getElementById("response-text");
     if (!el) return;
-    if (text) SceneController.enter("RESPONSE");
+    const stayInVoice = !!(opts && opts.stayInVoice);
+    if (text && !stayInVoice) SceneController.enter("RESPONSE");
     clearTypewriter();
     el.classList.remove("thinking");
     el.classList.remove("markdown-body");
@@ -1886,8 +1876,10 @@ function updateResponsePanel(text) {
             el.innerHTML = renderMarkdown(text);
             enhanceCodeBlocks(el);
             // After a response settles, quietly return to idle if no
-            // other scene has taken over.
+            // other scene has taken over — but never dissolve away from
+            // an active voice session.
             setTimeout(() => {
+                if (voiceActive) return;
                 if (SceneController.current === "RESPONSE" && SceneController.phase === "settled") {
                     SceneController.dissolveToIdle();
                 }
@@ -2489,28 +2481,26 @@ async function activateVoice() {
                     });
 
                     // Some browsers reject the implicit autoplay attach()
-                    // triggers internally (silent rejection — no error
-                    // event fires, it just never plays). Explicitly retry
-                    // .play() and surface a real error if it's blocked —
-                    // this is one of the most likely explanations for
-                    // "state says speaking but there's silence": the
-                    // audio genuinely never started playing in the tab.
+                    // triggers internally. Retry play(), but do NOT force
+                    // LISTENING on failure — that raced with real
+                    // voice_state transitions and pinned the UI on
+                    // LISTENING after connect.
                     el.play().catch((err) => {
                         console.error("[PLAYER] ERROR: autoplay blocked or playback failed:", err);
                         addLogEntry(
                             "Playback blocked by browser autoplay policy — click anywhere on the page and retry.",
                             "error"
                         );
-                        if (voiceActive) setVoiceState("LISTENING");
                     });
                 }
             }
         });
 
         livekitRoom.on(RoomEvent.TrackUnsubscribed, (track) => {
+            // Continuous agent audio can blip unsubscribe between turns.
+            // Never force LISTENING here — voice_state is the source of truth.
             if (track.kind === "audio") {
                 jarvisSpeaking = false;
-                if (voiceActive) setVoiceState("LISTENING");
             }
         });
 

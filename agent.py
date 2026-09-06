@@ -54,11 +54,15 @@ async def send_state_to_backend(state: str):
     disconnecting mid-turn in testing, aborting the reply that was
     already on its way.
     """
+    # LiveKit may hand us an enum/Literal — normalize to a plain string
+    # the frontend switch expects ("listening" | "thinking" | "speaking").
+    state_str = getattr(state, "value", None) or str(state)
+    state_str = state_str.split(".")[-1].strip().lower()
     try:
         async with aiohttp.ClientSession() as http:
             await http.post(
                 f"{BACKEND_URL}/voice/state",
-                json={"state": state},
+                json={"state": state_str},
                 timeout=aiohttp.ClientTimeout(total=2),
             )
     except Exception as e:
