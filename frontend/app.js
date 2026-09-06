@@ -17,15 +17,17 @@ let ws               = null;
 let wsReconnectTimer = null;
 let voiceActive      = false;
 let livekitRoom      = null;
+let micStream        = null;
+let jarvisSpeaking   = false;
+/** Resolves when agent session can actually hear (voice_state listening/speaking). */
+let voiceSessionReadyResolver = null;
 let audioContext     = null;
 let analyser         = null;
-let micStream        = null;
 let waveformAnimId   = null;
 let statusInterval   = null;
 let statsInterval    = null;
 let eventsInterval   = null;
 let typewriterInterval = null;
-let jarvisSpeaking   = false;  // ── FIX 4: track when JARVIS is speaking
 
 // ── Section 5: MARKDOWN RENDERING ──────────────────────
 // marked.js parses Markdown -> HTML, DOMPurify sanitizes that HTML
@@ -1280,9 +1282,19 @@ function handleWsMessage(data) {
         case "voice_state":
             // Real agent-side state pushed from agent.py's
             // agent_state_changed event via the backend.
-            if (!voiceActive) break;
             {
                 const raw = String(data.state || "").toLowerCase();
+                // Session can hear — unblock activateVoice() even before
+                // voiceActive flips true (we set it early during connect).
+                if (
+                    voiceSessionReadyResolver &&
+                    (raw === "listening" || raw === "speaking" || raw === "idle")
+                ) {
+                    const resolve = voiceSessionReadyResolver;
+                    voiceSessionReadyResolver = null;
+                    resolve();
+                }
+                if (!voiceActive) break;
                 if (raw === "thinking") {
                     setVoiceState("THINKING");
                     SceneController.enter("VOICE", { state: "THINKING" });
@@ -2545,36 +2557,56 @@ async function activateVoice() {
 
         if (micStream) startAudioVisualiser(micStream);
 
-        // Wait for the agent worker to actually join — otherwise we sit
-        // on LISTENING forever with nobody subscribed to the mic.
-        const agentReady = await waitForVoiceAgent(livekitRoom, 20000);
-        if (!agentReady) {
+        // Wait for the agent worker to join the room first.
+        const agentJoined = await waitForVoiceAgent(livekitRoom, 20000);
+        if (!agentJoined) {
             addLogEntry(
                 "Voice agent did not join the room. Restart the backend (agent process) and try again.",
                 "error"
             );
             updateResponsePanel(
-                "Voice agent is not in the room, Sir. I can hear nothing until it joins — restart JARVIS and try voice again."
+                "Voice agent is not in the room, Sir. Restart JARVIS and try voice again."
             );
             await deactivateVoice();
             return;
         }
-        addLogEntry("Voice agent joined the room.", "success");
+        addLogEntry("Voice agent joined — waiting until it can hear you...", "info");
 
+        // Accept voice_state while models finish starting. Do NOT claim
+        // LISTENING until the agent posts listening/speaking — otherwise
+        // you speak into a still-loading Whisper pipeline.
         voiceActive = true;
-
         if (btn) btn.classList.add("active");
         if (mic) mic.classList.add("active");
-        setVoiceState("LISTENING");
-        SceneController.enter("VOICE", { state: "LISTENING" });
-
-        document.getElementById("audio-status").textContent = "ACTIVE";
-        addLogEntry("Voice assistant activated.", "success");
+        setVoiceState("THINKING");
+        SceneController.enter("VOICE", { state: "THINKING" });
+        document.getElementById("audio-status").textContent = "STARTING";
         const resp = document.getElementById("response-text");
         if (resp) {
             clearTypewriter();
             resp.classList.remove("thinking", "markdown-body", "typing-cursor");
-            resp.textContent = "Voice activated. Listening, Sir.";
+            resp.textContent = "Starting voice models, Sir — speak after you hear the greeting or see Listening.";
+        }
+
+        const sessionReady = await waitForVoiceSessionReady(90000);
+        if (!sessionReady) {
+            addLogEntry(
+                "Voice session never became ready (agent did not signal listening). Check the backend/[AGENT] console.",
+                "error"
+            );
+            updateResponsePanel(
+                "Voice models did not finish starting, Sir. Restart JARVIS and try again."
+            );
+            await deactivateVoice();
+            return;
+        }
+
+        setVoiceState("LISTENING");
+        SceneController.enter("VOICE", { state: "LISTENING" });
+        document.getElementById("audio-status").textContent = "ACTIVE";
+        addLogEntry("Voice assistant activated — speak now.", "success");
+        if (resp) {
+            resp.textContent = "Listening, Sir. Try: \"wake up jarvis\" or ask a question.";
         }
     } catch (e) {
         console.error("[JARVIS] Voice error:", e);
@@ -2615,13 +2647,26 @@ function waitForVoiceAgent(room, timeoutMs) {
         };
         const timer = setTimeout(() => finish(false), timeoutMs);
         room.on(RoomEvent.ParticipantConnected, onJoin);
-        // Agent may already be mid-join
         setTimeout(() => {
             if (roomHasVoiceAgent(room)) finish(true);
         }, 250);
     });
 }
 
+function waitForVoiceSessionReady(timeoutMs) {
+    return new Promise((resolve) => {
+        let settled = false;
+        const done = (ok) => {
+            if (settled) return;
+            settled = true;
+            voiceSessionReadyResolver = null;
+            clearTimeout(timer);
+            resolve(ok);
+        };
+        voiceSessionReadyResolver = () => done(true);
+        const timer = setTimeout(() => done(false), timeoutMs);
+    });
+}
 async function deactivateVoice() {
     const btn = document.getElementById("voice-btn");
     const mic = document.getElementById("mic-indicator");
@@ -2650,6 +2695,7 @@ async function deactivateVoice() {
 
     voiceActive    = false;
     jarvisSpeaking = false;
+    voiceSessionReadyResolver = null;
 
     if (btn) btn.classList.remove("active", "speaking");
     if (mic) mic.classList.remove("active");

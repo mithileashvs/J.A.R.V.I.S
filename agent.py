@@ -40,6 +40,29 @@ logger = logging.getLogger("jarvis")
 
 BACKEND_URL = "http://localhost:8000"
 
+# Preloaded at worker process start (see __main__) so the first voice
+# session does not join the room while Whisper/Piper are still loading —
+# that race made the UI show LISTENING while the agent was still deaf.
+_PRELOADED_STT = None
+_PRELOADED_TTS = None
+_PRELOADED_VAD = None
+
+
+def _preload_voice_models():
+    """Load STT/TTS/VAD once in the worker process before accepting jobs."""
+    global _PRELOADED_STT, _PRELOADED_TTS, _PRELOADED_VAD
+    if _PRELOADED_STT is not None:
+        return
+    print("[JARVIS AGENT] Preloading Whisper STT (this can take a minute the first time)...")
+    # "small" is cached/fast on CPU and avoids the long deaf window that
+    # "medium" caused while the UI already showed LISTENING.
+    _PRELOADED_STT = LocalWhisperSTT(model_size="small", device="cpu", compute_type="int8")
+    print("[JARVIS AGENT] Preloading Piper TTS...")
+    _PRELOADED_TTS = LocalPiperTTS(model_path=PIPER_MODEL_PATH, speed=0.95)
+    print("[JARVIS AGENT] Preloading Silero VAD...")
+    _PRELOADED_VAD = silero.VAD.load()
+    print("[JARVIS AGENT] Voice models ready.")
+
 
 async def send_state_to_backend(state: str):
     """
@@ -85,76 +108,36 @@ class Assistant(Agent):
 
 async def entrypoint(ctx: agents.JobContext):
     logger.info(f"JARVIS agent connecting to room: {ctx.room.name}")
-    print(f"[JARVIS AGENT] Connecting to room: {ctx.room.name}")
+    print(f"[JARVIS AGENT] Job received for room: {ctx.room.name}")
+
+    # Ensure models exist even if preload in __main__ was skipped
+    # (e.g. agent imported differently). Do this BEFORE joining the
+    # room so the browser never sees an agent participant that cannot
+    # hear yet.
+    await send_state_to_backend("thinking")
+    try:
+        _preload_voice_models()
+    except Exception as e:
+        print(f"[JARVIS AGENT ERROR] Model preload failed: {e}")
+        logger.error(f"Model preload failed: {e}", exc_info=True)
+        raise
 
     await ctx.connect()
-    print(f"[JARVIS AGENT] Connected. Starting session...")
+    print(f"[JARVIS AGENT] Connected to room. Starting session...")
 
     session = AgentSession(
-        # FIX: reverted to plain "small" — it's the one model that's
-        # actually already fully cached on your machine and confirmed
-        # fast in every successful test so far. Both "medium" and
-        # "small.en" required fresh downloads that stalled on a slow/
-        # rate-limited connection to HuggingFace (note the "sending
-        # unauthenticated requests" warning in your logs) — not worth
-        # gambling on a third model needing a fresh multi-hundred-MB
-        # download. Getting accuracy gains from the free levers instead
-        # (initial_prompt below, beam_size, the earlier stereo-downmix
-        # fix) rather than a bigger model.
-        # FIX (accuracy, zero extra setup): bumped "small" -> "medium".
-        # "small" was tuned for a laptop with no GPU — a meaningfully
-        # more accurate model, still fine on CPU with a little extra
-        # latency. (You do have an RTX 4050 — if this still mishears
-        # things, switching device="cuda" here would let an even bigger
-        # model run just as fast, but that needs matching NVIDIA cuDNN/
-        # cuBLAS libraries installed separately first, so it's not done
-        # by default here.)
-        stt=LocalWhisperSTT(model_size="medium", device="cpu", compute_type="int8"),
-        # ARCHITECTURE FIX: previously this was a bare
-        # openai.LLM(...) talking straight to Ollama — meaning a voice
-        # turn NEVER reached intent_router/context_manager/
-        # model_selector/llm_orchestrator, the pipeline main.py's
-        # /chat endpoint uses for typed messages. That's why voice
-        # answered general-knowledge/calculation questions in-persona
-        # instead of correctly, even though the identical text typed
-        # into the chat box worked fine. BackendBridgeLLM wraps the
-        # same raw Ollama LLM (kept as `fallback_llm` so tool calls
-        # like get_weather/search_web/send_email/open_application/
-        # open_website — which only exist on the voice side — still
-        # work exactly as before) and, for any turn that ISN'T a tool
-        # call, routes the utterance through the real /chat pipeline
-        # instead. See backend_bridge_llm.py for the full rationale.
+        stt=_PRELOADED_STT,
         llm=BackendBridgeLLM(
             fallback_llm=openai.LLM(model=OLLAMA_MODEL, base_url=OLLAMA_URL, api_key="ollama"),
         ),
-        tts=LocalPiperTTS(model_path=PIPER_MODEL_PATH, speed=0.95),
-        vad=silero.VAD.load(),
+        tts=_PRELOADED_TTS,
+        vad=_PRELOADED_VAD,
 
-        # ── FIX 1: Reduce STT latency ─────────────────────────
-        # NOTE: these were tuned very aggressively (0.3s/0.8s) purely for
-        # low latency. That's very likely a direct cause of "STT
-        # recognizes the wrong words" — a short pause mid-sentence
-        # (taking a breath, thinking of the next word) can trigger
-        # end-of-turn before you're actually done talking, so whisper
-        # transcribes a truncated sentence and produces a different
-        # (wrong-looking) result rather than what you actually said in
-        # full. Relaxed slightly to give natural speech room to finish
-        # before the turn is cut off; still fast enough to feel
-        # responsive.
         min_endpointing_delay=0.5,
         max_endpointing_delay=1.5,
         min_consecutive_speech_delay=0.0,
         preemptive_generation=True,
 
-        # ── FIX 4: Proper interruption handling ───────────────
-        # min_interruption_duration was 0.3s — tightened to 0.2s so
-        # cutting JARVIS off feels closer to instant rather than
-        # needing a deliberate pause-then-speak. min_interruption_words
-        # is already at its minimum (1), so that's not a lever left to
-        # pull. false_interruption_timeout stays at 0.6s as a guard: if
-        # what looked like an interruption turns out to be background
-        # noise rather than real speech, JARVIS resumes instead of
-        # staying cut off.
         allow_interruptions=True,
         min_interruption_duration=0.2,
         min_interruption_words=1,
@@ -162,19 +145,11 @@ async def entrypoint(ctx: agents.JobContext):
         resume_false_interruption=True,
         discard_audio_if_uninterruptible=True,
 
-        # ── FIX 4: Echo cancellation warmup ───────────────────
-        aec_warmup_duration=3.0,
+        # Was 3.0s — discarded the user's first phrase ("wake up jarvis")
+        # right after the UI showed LISTENING. Keep a tiny settle only.
+        aec_warmup_duration=0.3,
     )
 
-    # ── User speech: console/debug logging only ────────────────
-    # NOTE: this used to ALSO POST the transcript to
-    # /voice/transcript to save it into Live Conversation. That's now
-    # backend_bridge_llm.py's job (see its "TRANSCRIPT SAVING" docs) —
-    # it's the one place that knows whether a given turn ends up
-    # tool-routed, pipeline-routed (in which case /chat itself saves
-    # it), or is the post-tool narration round, so it can save each
-    # user/assistant turn exactly once instead of this handler and
-    # /chat both saving the same message.
     @session.on("user_input_transcribed")
     def on_user_speech(event):
         if not event.is_final:
@@ -186,21 +161,10 @@ async def entrypoint(ctx: agents.JobContext):
         else:
             print("[STT] No speech recognized")
 
-    # ── JARVIS response: console/debug logging only ────────────
-    # NOTE: saving to Live Conversation is now backend_bridge_llm.py's
-    # job too, for the same reason as above. This handler is kept
-    # purely so failures are still visible in the console the moment
-    # they happen (e.g. an empty completion), without duplicating the
-    # save/broadcast backend_bridge_llm.py already did.
     @session.on("conversation_item_added")
     def on_conversation_item(event):
         try:
             item = event.item
-            # The AgentSession framework also fires
-            # conversation_item_added for internal control items (e.g.
-            # AgentHandoff, used for multi-agent handoff) that don't
-            # have a .role at all — getattr(..., None) skips those
-            # silently instead of throwing.
             role = getattr(item, "role", None)
             if role != "assistant":
                 return
@@ -208,19 +172,11 @@ async def entrypoint(ctx: agents.JobContext):
             if text.strip():
                 print(f"[AI] Response: {text}")
             else:
-                # An empty assistant text item means TTS has nothing to
-                # synthesize, so agent_state_changed goes straight from
-                # "thinking" back to "listening", skipping "speaking"
-                # entirely. Log what the item actually contained so we
-                # can tell whether this was a tool-call-only completion
-                # (expected — the tool-call round has no spoken text)
-                # or a genuinely empty LLM response.
                 print(f"[AI] (no spoken text this turn — raw item: {item!r})")
         except Exception as e:
             print(f"[AI ERROR] conversation_item_added handler failed: {e}")
             logger.warning(f"conversation_item_added error: {e}")
 
-    # ── Voice state diagnostics ─────────────────────────────
     @session.on("agent_state_changed")
     def on_agent_state_changed(event):
         state = getattr(event, "new_state", None)
@@ -230,15 +186,22 @@ async def entrypoint(ctx: agents.JobContext):
             print("[COMMAND] Processing...")
         elif state == "speaking":
             print("[TTS] Speaking...")
-        # Forward the real state to the backend -> frontend so the UI
-        # can show live feedback (see send_state_to_backend docstring).
         if state:
             asyncio.create_task(send_state_to_backend(state))
 
-    # BVC enhanced noise cancellation requires LiveKit Cloud. On local
-    # livekit-server --dev it breaks the audio input path (agent joins
-    # but never hears the mic) — which looks like "stuck on LISTENING".
-    # Only enable it for real Cloud URLs.
+    # Also surface when the user is mid-utterance so the UI leaves
+    # a frozen LISTENING label while speech is being captured.
+    @session.on("user_state_changed")
+    def on_user_state_changed(event):
+        state = getattr(event, "new_state", None)
+        state_str = getattr(state, "value", None) or str(state or "")
+        state_str = state_str.split(".")[-1].strip().lower()
+        if state_str == "speaking":
+            print("[VOICE] User speaking...")
+            asyncio.create_task(send_state_to_backend("thinking"))
+        elif state_str in ("listening", "away"):
+            print(f"[VOICE] User state: {state_str}")
+
     lk_url = (os.getenv("LIVEKIT_URL") or "").lower()
     use_bvc = "livekit.cloud" in lk_url
     if use_bvc:
@@ -261,12 +224,14 @@ async def entrypoint(ctx: agents.JobContext):
             room_input_options=room_input,
         )
     except Exception as e:
-        # If this fails (STT/TTS model loading, etc.), the agent would
-        # otherwise sit registered but never listening — same symptom
-        # as "JARVIS does not respond" from the browser.
         print(f"[JARVIS AGENT ERROR] session.start() failed: {e}")
         logger.error(f"session.start() failed: {e}", exc_info=True)
         raise
+
+    # Session can hear the mic now — tell the UI before the greeting
+    # so "wake up jarvis" isn't spoken into a still-loading pipeline.
+    await send_state_to_backend("listening")
+    print(f"[JARVIS AGENT] Session active and listening.")
 
     try:
         greeting_instruction = _build_greeting_instruction()
@@ -276,8 +241,6 @@ async def entrypoint(ctx: agents.JobContext):
     except Exception as e:
         print(f"[JARVIS AGENT ERROR] generate_reply() failed: {e}")
         logger.error(f"generate_reply() failed: {e}", exc_info=True)
-
-    print(f"[JARVIS AGENT] Session active and listening.")
 
 
 def _build_greeting_instruction() -> str:
@@ -346,6 +309,14 @@ if __name__ == "__main__":
     if agent_name is None:
         agent_name = "" if is_local else "Jarvis"
     agent_name = agent_name.strip()
+
+    # Load Whisper/Piper/VAD before the worker starts accepting jobs so
+    # the first voice click is not a multi-minute "fake listening" wait.
+    try:
+        _preload_voice_models()
+    except Exception as e:
+        print(f"[JARVIS AGENT ERROR] Startup preload failed: {e}")
+        raise
 
     worker_kwargs = {"entrypoint_fnc": entrypoint}
     if agent_name:
